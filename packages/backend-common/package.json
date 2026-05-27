@@ -1,0 +1,29 @@
+{
+  "name": "@repo/backend-common",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch"
+  },
+  "dependencies": {
+    "@types/node": "^22.15.3",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
