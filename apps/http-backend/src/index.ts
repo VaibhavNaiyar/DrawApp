@@ -1,12 +1,12 @@
 import express from "express";
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcrypt";
 import { middleware } from "./middlewares";
 import { SignupSchema, SigninSchema } from "@repo/common";
 import { JWT_SECRET } from "@repo/backend-common";
+import { prismaClient } from "@repo/db";
 
-// Loads this app's own .env (PORT=3001)
-// JWT_SECRET is loaded by @repo/backend-common from the root .env
 dotenv.config();
 
 const app = express();
@@ -14,7 +14,7 @@ app.use(express.json());
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
-app.post("/signup", (req, res) => {
+app.post("/signup", async (req, res) => {
   const parsedData = SignupSchema.safeParse(req.body);
 
   if (!parsedData.success) {
@@ -27,16 +27,31 @@ app.post("/signup", (req, res) => {
 
   const { username, password, email } = parsedData.data;
 
-  // db signup
-  // const hashedPassword = await bcrypt.hash(password, 10);
-  // const user = await db.user.create({ data: { username, password: hashedPassword, email } });
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-  const token = jwt.sign({ userId: "dummyUserId", username }, JWT_SECRET);
+    const user = await prismaClient.user.create({
+      data: {
+        username,
+        email,
+        password: hashedPassword,
+        name: username,
+      },
+    });
 
-  res.json({ token });
+    const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET);
+
+    res.json({ token });
+  } catch (e: any) {
+    if (e?.code === "P2002") {
+      res.status(409).json({ message: "Username or email already exists" });
+      return;
+    }
+    res.status(500).json({ message: "Internal server error" });
+  }
 });
 
-app.post("/signin", (req, res) => {
+app.post("/signin", async (req, res) => {
   const parsedData = SigninSchema.safeParse(req.body);
 
   if (!parsedData.success) {
@@ -49,24 +64,31 @@ app.post("/signin", (req, res) => {
 
   const { username, password } = parsedData.data;
 
-  // db signin
-  // const user = await db.user.findUnique({ where: { username } });
-  // if (!user) { res.status(403).json({ message: "User not found" }); return; }
-  // const passwordMatch = await bcrypt.compare(password, user.password);
-  // if (!passwordMatch) { res.status(403).json({ message: "Wrong password" }); return; }
+  try {
+    const user = await prismaClient.user.findUnique({ where: { username } });
 
-  const token = jwt.sign({ userId: "dummyUserId", username }, JWT_SECRET);
+    if (!user) {
+      res.status(403).json({ message: "User not found" });
+      return;
+    }
 
-  res.json({ token });
+    const passwordMatch = await bcrypt.compare(password, user.password);
+
+    if (!passwordMatch) {
+      res.status(403).json({ message: "Wrong password" });
+      return;
+    }
+
+    const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET);
+
+    res.json({ token });
+  } catch {
+    res.status(500).json({ message: "Internal server error" });
+  }
 });
 
 app.get("/room", middleware, (req, res) => {
-  const userId = req.userId;
-
-  // db get rooms for this user
-  // const rooms = await db.room.findMany({ where: { creatorId: userId } });
-
-  res.json({ message: "You are authenticated", userId });
+  res.json({ userId: req.userId });
 });
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
