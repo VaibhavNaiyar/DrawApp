@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "description": "",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
   },
   "scripts": {
     "db:generate": "prisma generate",
@@ -19,6 +22,8 @@
   "type": "commonjs",
   "dependencies": {
     "@prisma/client": "^7.8.0",
+    "@types/dotenv": "^8.2.3",
+    "dotenv": "^16.6.1",
     "prisma": "^7.8.0"
   }
 }
