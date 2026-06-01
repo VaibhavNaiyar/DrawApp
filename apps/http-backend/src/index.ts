@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
@@ -10,6 +11,7 @@ import { prismaClient } from "@repo/db";
 dotenv.config();
 
 const app = express();
+app.use(cors({ origin: "http://localhost:3000" }));
 app.use(express.json());
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
@@ -43,6 +45,7 @@ app.post("/signup", async (req, res) => {
 
     res.json({ token });
   } catch (e: any) {
+    console.error("[signup error]", e);
     if (e?.code === "P2002") {
       res.status(409).json({ message: "Username or email already exists" });
       return;
@@ -82,13 +85,53 @@ app.post("/signin", async (req, res) => {
     const token = jwt.sign({ userId: user.id, username: user.username }, JWT_SECRET);
 
     res.json({ token });
-  } catch {
+  } catch (e) {
+    console.error("[signin error]", e);
     res.status(500).json({ message: "Internal server error" });
   }
 });
 
-app.get("/room", middleware, (req, res) => {
-  res.json({ userId: req.userId });
+app.post("/room", middleware, async (req, res) => {
+  const { slug } = req.body;
+  if (!slug || typeof slug !== "string" || slug.trim().length < 1) {
+    res.status(400).json({ message: "Room name is required" });
+    return;
+  }
+
+  try {
+    const room = await prismaClient.room.create({
+      data: {
+        slug: slug.trim(),
+        adminId: req.userId!,
+      },
+    });
+    res.json({ roomId: room.id, slug: room.slug });
+  } catch (e: any) {
+    console.error("[create room error]", e);
+    if (e?.code === "P2002") {
+      res.status(409).json({ message: "Room name already taken" });
+      return;
+    }
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.get("/room/:id", middleware, async (req, res) => {
+  const id = Number(req.params.id);
+  if (isNaN(id)) {
+    res.status(400).json({ message: "Invalid room ID" });
+    return;
+  }
+  try {
+    const room = await prismaClient.room.findUnique({ where: { id } });
+    if (!room) {
+      res.status(404).json({ message: "Room not found" });
+      return;
+    }
+    res.json({ roomId: room.id, slug: room.slug });
+  } catch (e) {
+    res.status(500).json({ message: "Internal server error" });
+  }
 });
 
 // ─── Start Server ─────────────────────────────────────────────────────────────

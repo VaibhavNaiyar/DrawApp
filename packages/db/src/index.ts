@@ -1,17 +1,16 @@
-import { PrismaClient } from "./generated/prisma/client";
+import { PrismaClient } from "@prisma/client";
+import { PrismaNeon } from "@prisma/adapter-neon";
+import { Pool, neonConfig } from "@neondatabase/serverless";
+import ws from "ws";
 import dotenv from "dotenv";
 import path from "path";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-const prismaOptions: any = process.env.DATABASE_URL
-  ? {
-      datasources: {
-        db: {
-          url: process.env.DATABASE_URL,
-        },
-      },
-    }
-  : {};
+// Use WebSocket instead of TCP — works on all networks (port 443 not 5432)
+neonConfig.webSocketConstructor = ws;
 
-export const prismaClient = new PrismaClient(prismaOptions);
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaNeon(pool);
+
+export const prismaClient = new PrismaClient({ adapter });

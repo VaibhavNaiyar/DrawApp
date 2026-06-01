@@ -90,6 +90,7 @@ wss.on("connection", function connection(ws, request) {
         where: { roomId },
         orderBy: { createdAt: "asc" },
         take: 50,
+        include: { user: { select: { username: true } } },
       });
 
       ws.send(JSON.stringify({ type: "old_chats", chats: oldChats }));
@@ -117,8 +118,11 @@ wss.on("connection", function connection(ws, request) {
           userId: currentUser.userId,
           roomId,
         },
+        include: { user: { select: { username: true } } },
       });
 
+      // Send back to sender so they see their own message
+      ws.send(JSON.stringify({ type: "chat", message: saved }));
       // Broadcast to everyone else in the room
       broadcastToRoom(roomId, { type: "chat", message: saved }, currentUser.ws);
     }
