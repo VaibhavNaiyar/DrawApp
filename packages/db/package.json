@@ -14,13 +14,9 @@
   },
   "type": "commonjs",
   "dependencies": {
-    "@neondatabase/serverless": "^0.10.4",
-    "@prisma/adapter-neon": "^6.5.0",
     "@prisma/client": "^6.5.0",
-    "@types/ws": "^8.18.1",
     "dotenv": "^16.6.1",
-    "prisma": "^6.5.0",
-    "ws": "^8.21.0"
+    "prisma": "^6.5.0"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*"
