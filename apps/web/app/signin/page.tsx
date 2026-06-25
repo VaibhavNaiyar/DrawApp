@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 import Link from "next/link";
 import styles from "./signin.module.css";
 
 export default function SigninPage() {
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,21 +19,19 @@ export default function SigninPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:3001/signin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.message || "Sign in failed");
+      if (result?.error) {
+        setError("Invalid email or password");
         return;
       }
 
-      localStorage.setItem("token", data.token);
       router.push("/dashboard");
+      router.refresh();
     } catch {
       setError("Could not connect to server");
     } finally {
@@ -73,13 +72,13 @@ export default function SigninPage() {
 
           <form onSubmit={handleSubmit} className={styles.form}>
             <div className={styles.field}>
-              <label className={styles.label}>Username</label>
+              <label className={styles.label}>Email</label>
               <input
                 className={styles.input}
-                type="text"
-                placeholder="your_username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
                 autoFocus
               />

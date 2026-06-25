@@ -7,7 +7,7 @@ import { z } from "zod";
 dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 
 const EnvSchema = z.object({
-  JWT_SECRET: z.string().min(1, "JWT_SECRET must be set in root .env"),
+  AUTH_SECRET: z.string().min(1, "AUTH_SECRET must be set in root .env"),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
@@ -18,4 +18,8 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const JWT_SECRET = parsed.data.JWT_SECRET;
+export const AUTH_SECRET = parsed.data.AUTH_SECRET;
+
+// Legacy alias — keeps the existing ws-backend (chat reference) working
+// without modification. Both resolve to the same AUTH_SECRET value.
+export const JWT_SECRET = parsed.data.AUTH_SECRET;

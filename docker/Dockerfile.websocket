@@ -1,0 +1,33 @@
+FROM node:20-alpine AS base
+RUN npm install -g pnpm
+
+# ─── Install dependencies ─────────────────────────────────────────────────────
+FROM base AS deps
+WORKDIR /app
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
+COPY packages/ ./packages/
+COPY apps/ws-backend/ ./apps/ws-backend/
+
+RUN pnpm install --frozen-lockfile
+
+# ─── Generate Prisma client ───────────────────────────────────────────────────
+WORKDIR /app/packages/db
+RUN pnpm db:generate
+
+# ─── Build ────────────────────────────────────────────────────────────────────
+FROM deps AS builder
+WORKDIR /app/apps/ws-backend
+RUN pnpm build
+
+# ─── Run ──────────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY --from=builder /app/apps/ws-backend/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+
+EXPOSE 8080
+CMD ["node", "dist/index.js"]

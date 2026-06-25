@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { JWT_SECRET } from "@repo/backend-common";
+import { AUTH_SECRET } from "@repo/backend-common";
 
 declare global {
   namespace Express {
@@ -18,13 +18,14 @@ export function middleware(req: Request, res: Response, next: NextFunction) {
     return;
   }
 
-  const token = authHeader.split(" ")[1];
+  const token = authHeader.split(" ")[1]!;
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
-    req.userId = decoded.userId;
+    // Handles both NextAuth JWTs (sub field) and legacy JWTs (userId field)
+    const decoded = jwt.verify(token, AUTH_SECRET) as { sub?: string; userId?: string };
+    req.userId = decoded.sub ?? decoded.userId;
     next();
-  } catch (err) {
+  } catch {
     res.status(401).json({ message: "Unauthorized: Invalid or expired token" });
   }
 }

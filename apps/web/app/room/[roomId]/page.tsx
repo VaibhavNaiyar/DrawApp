@@ -40,44 +40,56 @@ export default function RoomPage() {
   const roomId = Number(params.roomId);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) {
-      router.push("/signin");
-      return;
+    let ws: WebSocket;
+    let cancelled = false;
+
+    async function connect() {
+      // Token lives in HTTP-only cookie — fetch it via API route
+      const tokenRes = await fetch("/api/auth/token");
+      if (!tokenRes.ok || cancelled) {
+        router.push("/signin");
+        return;
+      }
+      const { token } = await tokenRes.json();
+
+      if (cancelled) return;
+
+      setCurrentUserId(decodeToken(token));
+
+      ws = new WebSocket(`ws://localhost:8080?token=${token}`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setConnected(true);
+        ws.send(JSON.stringify({ type: "join_room", roomId }));
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === "old_chats") {
+          setChats(data.chats as ChatMessage[]);
+        } else if (data.type === "chat") {
+          setChats((prev) => addUnique(prev, data.message));
+        } else if (data.error) {
+          setError(data.error);
+        }
+      };
+
+      ws.onclose = () => setConnected(false);
+      ws.onerror = () => setError("WebSocket connection failed");
     }
 
-    setCurrentUserId(decodeToken(token));
-
-    const ws = new WebSocket(`ws://localhost:8080?token=${token}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setConnected(true);
-      ws.send(JSON.stringify({ type: "join_room", roomId }));
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-
-      if (data.type === "old_chats") {
-        // Replace state entirely — server sends full history on join
-        setChats(data.chats as ChatMessage[]);
-      } else if (data.type === "chat") {
-        setChats((prev) => addUnique(prev, data.message));
-      } else if (data.error) {
-        setError(data.error);
-      }
-    };
-
-    ws.onclose = () => setConnected(false);
-    ws.onerror = () => setError("WebSocket connection failed");
+    connect();
 
     return () => {
-      // Close regardless of state (CONNECTING or OPEN) to prevent double-connect in StrictMode
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "leave_room", roomId }));
+      cancelled = true;
+      if (wsRef.current) {
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: "leave_room", roomId }));
+        }
+        wsRef.current.close();
+        wsRef.current = null;
       }
-      ws.close();
     };
   }, [roomId, router]);
 

@@ -5,7 +5,7 @@ import { prismaClient } from "@repo/db";
 
 const wss = new WebSocketServer({ port: 8080 });
 
-// ─── In-memory store ──────────────────────────────────────────────────────────
+//  In-memory store 
 
 interface User {
   userId: string;
@@ -16,7 +16,7 @@ interface User {
 // All currently connected users
 const users: User[] = [];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+//  Helpers 
 
 function getUser(ws: WebSocket): User | undefined {
   return users.find((u) => u.ws === ws);
@@ -31,7 +31,7 @@ function broadcastToRoom(roomId: number, message: object, senderWs: WebSocket) {
   });
 }
 
-// ─── Connection ───────────────────────────────────────────────────────────────
+//  Connection 
 
 wss.on("connection", function connection(ws, request) {
   // 1. Extract token from query param: ws://localhost:8080?token=xxx
@@ -58,7 +58,7 @@ wss.on("connection", function connection(ws, request) {
 
   console.log(`User ${userId} connected. Total online: ${users.length}`);
 
-  // ─── Message Handler ─────────────────────────────────────────────────────
+  //  Message Handler
 
   ws.on("message", async function message(data) {
     let parsed: any;
@@ -97,13 +97,13 @@ wss.on("connection", function connection(ws, request) {
       console.log(`User ${userId} joined room ${roomId}`);
     }
 
-    // ── LEAVE ROOM ────────────────────────────────────────────────────────
+    //  LEAVE ROOM 
     else if (type === "leave_room") {
       currentUser.rooms = currentUser.rooms.filter((r) => r !== roomId);
       console.log(`User ${userId} left room ${roomId}`);
     }
 
-    // ── CHAT ──────────────────────────────────────────────────────────────
+    //  CHAT 
     else if (type === "chat") {
       // User must be in the room to chat
       if (!currentUser.rooms.includes(roomId)) {
@@ -128,7 +128,7 @@ wss.on("connection", function connection(ws, request) {
     }
   });
 
-  // ─── Disconnect ──────────────────────────────────────────────────────────
+  //  Disconnect 
 
   ws.on("close", function () {
     const index = users.findIndex((u) => u.ws === ws);

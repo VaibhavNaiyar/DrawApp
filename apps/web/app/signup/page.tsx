@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 import Link from "next/link";
 import styles from "./signup.module.css";
 
 export default function SignupPage() {
-  const [username, setUsername] = useState("");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -19,10 +20,11 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      const res = await fetch("http://localhost:3001/signup", {
+      // 1. Create the account
+      const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify({ name, email, password }),
       });
 
       const data = await res.json();
@@ -32,8 +34,21 @@ export default function SignupPage() {
         return;
       }
 
-      localStorage.setItem("token", data.token);
+      // 2. Sign in automatically after successful registration
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        setError("Account created — please sign in manually.");
+        router.push("/signin");
+        return;
+      }
+
       router.push("/dashboard");
+      router.refresh();
     } catch {
       setError("Could not connect to server");
     } finally {
@@ -74,13 +89,13 @@ export default function SignupPage() {
 
           <form onSubmit={handleSubmit} className={styles.form}>
             <div className={styles.field}>
-              <label className={styles.label}>Username</label>
+              <label className={styles.label}>Name</label>
               <input
                 className={styles.input}
                 type="text"
-                placeholder="your_username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Your name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
                 required
                 autoFocus
               />
@@ -103,7 +118,7 @@ export default function SignupPage() {
               <input
                 className={styles.input}
                 type="password"
-                placeholder="Min 6 characters"
+                placeholder="Min 6 chars, with letter, number & symbol"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required

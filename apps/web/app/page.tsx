@@ -1,19 +1,10 @@
-"use client";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-
-export default function Home() {
-  const router = useRouter();
-
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (token) {
-      router.replace("/dashboard");
-    } else {
-      router.replace("/signin");
-    }
-  }, [router]);
-
-  return null;
+// Server component — reads cookie instantly, no JS waterfall
+export default async function HomePage() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get("token")?.value;
+  if (token) redirect("/dashboard");
+  else redirect("/signin");
 }
