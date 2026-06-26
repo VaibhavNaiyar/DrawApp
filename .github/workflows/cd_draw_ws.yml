@@ -1,0 +1,60 @@
+name: Deploy Drawing WebSocket Server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/draw-ws/**"
+      - "packages/**"
+      - "docker/Dockerfile.draw-ws"
+      - ".github/workflows/cd_draw_ws.yml"
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push draw-ws image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./docker/Dockerfile.draw-ws
+          provenance: false
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/drawapp-draw-ws:latest
+            ${{ secrets.DOCKER_USERNAME }}/drawapp-draw-ws:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─── Uncomment once VM is provisioned ──────────────────────────────────────
+  # deploy:
+  #   needs: build-and-push
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Deploy to VM via SSH
+  #       uses: appleboy/ssh-action@v1.2.0
+  #       with:
+  #         host: ${{ secrets.VM_HOST }}
+  #         username: ${{ secrets.VM_USERNAME }}
+  #         key: ${{ secrets.SSH_PRIVATE_KEY }}
+  #         script: |
+  #           docker pull ${{ secrets.DOCKER_USERNAME }}/drawapp-draw-ws:latest
+  #           docker stop drawapp-draw-ws || true
+  #           docker rm drawapp-draw-ws || true
+  #           docker run -d --name drawapp-draw-ws \
+  #             --env-file /etc/drawapp/.env \
+  #             -p 8081:8081 \
+  #             ${{ secrets.DOCKER_USERNAME }}/drawapp-draw-ws:latest

@@ -1,0 +1,32 @@
+FROM node:20-alpine AS base
+RUN npm install -g pnpm
+
+# ─── Install dependencies ─────────────────────────────────────────────────────
+FROM base AS deps
+WORKDIR /app
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
+COPY packages/ ./packages/
+COPY apps/draw-ws/ ./apps/draw-ws/
+
+RUN pnpm install --frozen-lockfile
+
+# ─── Generate Prisma client ───────────────────────────────────────────────────
+WORKDIR /app/packages/db
+RUN pnpm db:generate
+
+# ─── Build (esbuild bundles everything into a single dist/index.js) ───────────
+FROM deps AS builder
+WORKDIR /app/apps/draw-ws
+RUN pnpm build
+
+# ─── Run ──────────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY --from=builder /app/apps/draw-ws/dist/index.js ./index.js
+
+EXPOSE 8081
+CMD ["node", "index.js"]

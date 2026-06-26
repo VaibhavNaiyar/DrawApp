@@ -17,7 +17,7 @@
     "bcrypt": "^5.1.1",
     "jsonwebtoken": "^9.0.2",
     "next": "16.2.0",
-    "next-auth": "^5.0.0",
+    "next-auth": "beta",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

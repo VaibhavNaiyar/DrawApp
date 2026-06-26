@@ -1,9 +1,5 @@
 version: "3.9"
 
-# ─── DrawApp — Local Development Stack ───────────────────────────────────────
-# For production, DATABASE_URL should point to Neon (or your hosted Postgres).
-# For local dev, the `db` service spins up a local Postgres instance.
-
 services:
   db:
     image: postgres:16-alpine
@@ -36,6 +32,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── Chat WebSocket (reference / learning backend) ──────────────────────────
   websocket:
     build:
       context: .
@@ -50,6 +47,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── Drawing WebSocket (Phase 3 — the real-time canvas backend) ─────────────
+  draw-ws:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.draw-ws
+    ports:
+      - "8081:8081"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://drawapp:${POSTGRES_PASSWORD:-drawapp_dev}@db:5432/drawapp
+      AUTH_SECRET: ${AUTH_SECRET}
+      DRAW_WS_PORT: 8081
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     build:
       context: .
@@ -59,13 +73,14 @@ services:
         AUTH_SECRET: ${AUTH_SECRET}
         NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://localhost:3000}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8080}
+        NEXT_PUBLIC_DRAW_WS_URL: ${NEXT_PUBLIC_DRAW_WS_URL:-ws://localhost:8081}
         NEXT_PUBLIC_HTTP_URL: ${NEXT_PUBLIC_HTTP_URL:-http://localhost:3001}
     ports:
       - "3000:3000"
     env_file: .env
     depends_on:
       - http-backend
-      - websocket
+      - draw-ws
     restart: unless-stopped
 
 volumes:

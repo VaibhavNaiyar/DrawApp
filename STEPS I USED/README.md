@@ -1,63 +1,6 @@
 # DrawApp — Build Journal
 
-A step-by-step record of every decision made while building this real-time collaborative whiteboard, inspired by [coderomm/CollabyDraw](https://github.com/coderomm/CollabyDraw).
-
----
-
-## Phase 1 — Code Review & Gap Analysis
-
-### What we compared
-My DrawApp monorepo vs the CollabyDraw open-source repo.
-
-### Monorepo structure gaps found
-
-| Area | DrawApp (old) | CollabyDraw | Fix needed |
-|---|---|---|---|
-| HTTP backend | Separate Express server (port 3001) | No separate server — Next.js server actions | Keep Express for reference, move auth into Next.js |
-| WS backend name | `ws-backend` | `ws` | Cosmetic only |
-| turbo.json env vars | Not declared | `DATABASE_URL`, `AUTH_SECRET` etc declared | Add env vars to turbo build task |
-| esbuild for WS | Uses `tsc` | Uses `esbuild` | Add in Phase 3 |
-
-### Database schema gaps found
-
-| Model/Field | DrawApp (old) | CollabyDraw | Why it matters |
-|---|---|---|---|
-| `User.id` | UUID | cuid | cuids are URL-safe, sortable, shorter |
-| `User.username` | Exists | Does not exist | CollabyDraw is email-based, not username-based |
-| `User.emailVerified` | Missing | Exists | Required for NextAuth + future OAuth providers |
-| `Room.id` | Int autoincrement | String cuid | Integer IDs are enumerable (security risk) |
-| `Room.slug` | Exists | Does not exist | Unnecessary — rooms identified by ID only |
-| `Chat` model | Exists (text messages) | `Shape` model (drawing JSON) | We're building a whiteboard, not a chat app |
-| Prisma version | 5.22.0 | 6.5.0 | Prisma 6 makes Neon adapter stable (no previewFeatures needed) |
-
-### Auth flow gaps found
-
-| Area | DrawApp (old) | CollabyDraw | Fix needed |
-|---|---|---|---|
-| Auth strategy | Custom JWT via Express | NextAuth with credentials | Install NextAuth v5 |
-| Sign-in field | username + password | email + password | Switch to email |
-| Password rules | min 6 chars only | min 6 + letter + number + special char | Strengthen Zod rules |
-| Token storage | httpOnly cookie (manual) | NextAuth session cookie | Let NextAuth manage cookies |
-| Middleware | Custom `jose` jwtVerify | `withAuth` from next-auth | Replace with NextAuth middleware |
-
-### WebSocket architecture gaps found
-
-| Area | DrawApp (old) | CollabyDraw |
-|---|---|---|
-| Event types | `join_room`, `leave_room`, `chat` | 14 typed events (DRAW, CURSOR_MOVE, EXISTING_SHAPES etc) |
-| Room ID type | number | string (cuid) |
-| Message payload | Simple `{type, roomId, message}` | Typed `WebSocketMessage` interface |
-| Multi-tab support | None | Tracks `connectionId` per tab |
-| Cursor tracking | None | `CURSOR_MOVE` events |
-| Shape persistence | N/A | In-memory `roomShapes` map |
-
-### Missing infrastructure (not in DrawApp at all)
-- No Dockerfiles
-- No docker-compose.yml
-- No GitHub Actions CI/CD pipelines
-- No `.env.example`
-
----
+## Phase 1 - understanding the system architecture and  coding language
 
 ## Phase 2 — DB & Auth Alignment
 
