@@ -13,10 +13,20 @@ import type {
   EllipseShape,
   LineShape,
   ArrowShape,
+  RemoteCursor,
 } from "./types";
 import { createRoughCanvas, renderCanvas } from "./renderer";
 import { hitTest } from "./hitTest";
 import { useDrawHistory } from "./useDrawHistory";
+import { useWebSocket, type WsHandlers } from "./useWebSocket";
+import {
+  generateKey,
+  exportKeyToBase64url,
+  importKeyFromBase64url,
+  getKeyFromFragment,
+  setKeyInFragment,
+} from "./crypto";
+import CursorOverlay from "./CursorOverlay";
 import Toolbar from "./Toolbar";
 import styles from "./DrawCanvas.module.css";
 
@@ -35,55 +45,50 @@ function makeId(): string {
 function translateShape(shape: DrawingShape, dx: number, dy: number): DrawingShape {
   switch (shape.type) {
     case "pencil":
-      return {
-        ...shape,
-        points: shape.points.map(([x, y]) => [x + dx, y + dy]),
-      };
+      return { ...shape, points: shape.points.map(([x, y]) => [x + dx, y + dy]) };
     case "rect":
       return { ...shape, x: shape.x + dx, y: shape.y + dy };
     case "ellipse":
       return { ...shape, cx: shape.cx + dx, cy: shape.cy + dy };
     case "line":
     case "arrow":
-      return {
-        ...shape,
-        x1: shape.x1 + dx,
-        y1: shape.y1 + dy,
-        x2: shape.x2 + dx,
-        y2: shape.y2 + dy,
-      };
+      return { ...shape, x1: shape.x1 + dx, y1: shape.y1 + dy, x2: shape.x2 + dx, y2: shape.y2 + dy };
   }
 }
 
-/** Deep-copy a shape so drag snapshots don't share references with history. */
 function cloneShape(shape: DrawingShape): DrawingShape {
   return JSON.parse(JSON.stringify(shape)) as DrawingShape;
 }
 
-/** Returns true if the in-progress shape has enough content to commit. */
 function isSignificantShape(shape: DrawingShape): boolean {
   switch (shape.type) {
-    case "pencil":
-      return shape.points.length > 1;
-    case "rect":
-      return shape.w > 2 && shape.h > 2;
-    case "ellipse":
-      return shape.rx > 2 && shape.ry > 2;
+    case "pencil":   return shape.points.length > 1;
+    case "rect":     return shape.w > 2 && shape.h > 2;
+    case "ellipse":  return shape.rx > 2 && shape.ry > 2;
     case "line":
-    case "arrow":
-      return (
-        Math.hypot(shape.x2 - shape.x1, shape.y2 - shape.y1) > 4
-      );
+    case "arrow":    return Math.hypot(shape.x2 - shape.x1, shape.y2 - shape.y1) > 4;
   }
+}
+
+// Deterministic color from a userId string (stays the same across sessions)
+function userColor(userId: string): string {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = (hash * 31 + userId.charCodeAt(i)) >>> 0;
+  }
+  const hue = hash % 360;
+  return `hsl(${hue}, 70%, 55%)`;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface DrawCanvasProps {
   roomId: string;
+  userId: string;
+  userName: string;
 }
 
-export default function DrawCanvas({ roomId }: DrawCanvasProps) {
+export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps) {
   const router = useRouter();
 
   // ── Canvas refs ────────────────────────────────────────────────────────────
@@ -93,8 +98,11 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
   // ── Drawing state (refs — no React re-render on update) ────────────────────
   const isDrawingRef = useRef(false);
   const startPosRef = useRef({ x: 0, y: 0 });
-  const currentShapeRef = useRef<DrawingShape | null>(null); // shape being drawn (not committed)
-  const dragStateRef = useRef<DragState | null>(null); // active select-tool drag
+  const currentShapeRef = useRef<DrawingShape | null>(null);
+  const dragStateRef = useRef<DragState | null>(null);
+
+  // ── E2EE ───────────────────────────────────────────────────────────────────
+  const cryptoKeyRef = useRef<CryptoKey | null>(null);
 
   // ── React state ────────────────────────────────────────────────────────────
   const [activeTool, setActiveTool] = useState<Tool>("pencil");
@@ -105,18 +113,120 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /**
-   * Transient overlay for drag-move: while the user is dragging a shape,
-   * this replaces the committed shapes for rendering — without polluting
-   * the undo stack. On mouseUp, the final position is committed once.
+   * transientAll: during drag-move, replaces the entire combined display
+   * (local shapes + remote shapes) without polluting undo history.
+   * Committed once on mouseUp, then cleared.
    */
-  const [transientShapes, setTransientShapes] = useState<DrawingShape[] | null>(null);
+  const [transientAll, setTransientAll] = useState<DrawingShape[] | null>(null);
 
-  const history = useDrawHistory();
-  const { shapes, commit, undo, redo, clear, canUndo, canRedo } = history;
+  // Remote shapes from other users (existing room shapes + others' draws).
+  // NOT in local undo history.
+  const [remoteShapes, setRemoteShapes] = useState<DrawingShape[]>([]);
+
+  // In-progress stream previews from other users (one per connection).
+  // Key = connectionId.
+  const [remoteStreams, setRemoteStreams] = useState<Map<string, DrawingShape>>(new Map());
+
+  // Cursor positions for other users
+  const [cursors, setCursors] = useState<Map<string, RemoteCursor>>(new Map());
+
+  // ── Ref mirrors for use inside drawImmediate (bypasses React renders) ───────
+  const remoteShapesRef = useRef<DrawingShape[]>([]);
+  const remoteStreamsRef = useRef<Map<string, DrawingShape>>(new Map());
+  useEffect(() => { remoteShapesRef.current = remoteShapes; }, [remoteShapes]);
+  useEffect(() => { remoteStreamsRef.current = remoteStreams; }, [remoteStreams]);
+
+  // ── History ────────────────────────────────────────────────────────────────
+  const { shapes, commit, undo, redo, clear, canUndo, canRedo } = useDrawHistory();
+
+  // ── WS handlers (stable callbacks — all delegate to refs/setState) ─────────
+  const wsHandlers: WsHandlers = {
+    onExistingShapes(existingShapes) {
+      setRemoteShapes(existingShapes);
+    },
+    onRemoteDraw(shape) {
+      setRemoteShapes((prev) => [...prev, shape]);
+      // Clear any pending stream preview for that user (they committed)
+      setRemoteStreams((prev) => {
+        // We don't know which connectionId drew this shape (DRAW event has connectionId)
+        // But since we received the final shape, we clean up any matching stream by shape id
+        const next = new Map(prev);
+        for (const [connId, s] of next) {
+          if (s.id === shape.id) { next.delete(connId); break; }
+        }
+        return next;
+      });
+    },
+    onRemoteEraser(ids) {
+      setRemoteShapes((prev) => prev.filter((s) => !ids.includes(s.id)));
+    },
+    onRemoteUpdate(shape) {
+      setRemoteShapes((prev) => prev.map((s) => (s.id === shape.id ? shape : s)));
+    },
+    onRemoteStream(connectionId, shape) {
+      setRemoteStreams((prev) => {
+        const next = new Map(prev);
+        next.set(connectionId, shape);
+        return next;
+      });
+    },
+    onRemoteStreamUpdate(connectionId, shape) {
+      setRemoteStreams((prev) => {
+        const next = new Map(prev);
+        next.set(connectionId, shape);
+        return next;
+      });
+    },
+    onCursorMove(connectionId, uid, uname, x, y) {
+      setCursors((prev) => {
+        const next = new Map(prev);
+        next.set(connectionId, {
+          connectionId,
+          userId: uid,
+          userName: uname,
+          color: userColor(uid),
+          x,
+          y,
+        });
+        return next;
+      });
+    },
+    onParticipants(_participants) { /* no-op — participants not displayed in this UI yet */ },
+    onUserJoined(_participants) {},
+    onUserLeft(connectionId) {
+      setCursors((prev) => {
+        const next = new Map(prev);
+        next.delete(connectionId);
+        return next;
+      });
+      setRemoteStreams((prev) => {
+        const next = new Map(prev);
+        next.delete(connectionId);
+        return next;
+      });
+    },
+  };
+
+  const { isConnected, connectionId, sendDraw, sendStreamShape, sendEraser, sendUpdate, sendCursorMove } =
+    useWebSocket(roomId, userId, userName, cryptoKeyRef, wsHandlers);
+
+  // ── E2EE initialisation (runs once on mount) ───────────────────────────────
+  useEffect(() => {
+    async function initCrypto() {
+      const fragment = getKeyFromFragment();
+      if (fragment) {
+        cryptoKeyRef.current = await importKeyFromBase64url(fragment);
+      } else {
+        const key = await generateKey();
+        const b64 = await exportKeyToBase64url(key);
+        setKeyInFragment(b64);
+        cryptoKeyRef.current = key;
+      }
+    }
+    initCrypto();
+  }, []);
 
   // ── Canvas size ────────────────────────────────────────────────────────────
-  // We set canvas pixel dimensions explicitly so the drawing buffer matches
-  // the display size. CSS makes the element 100% of its container.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -125,12 +235,13 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
       if (!canvas) return;
       canvas.width = canvas.offsetWidth;
       canvas.height = canvas.offsetHeight;
-      // Re-render after resize
       const rc = roughCanvasRef.current;
       if (!rc) return;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      renderCanvas(ctx, transientShapes ?? shapes, rc, selectedId);
+      const baseShapes = transientAll ?? [...shapes, ...remoteShapes];
+      const streams = Array.from(remoteStreams.values());
+      renderCanvas(ctx, [...baseShapes, ...streams], rc, selectedId);
     }
 
     const ro = new ResizeObserver(resize);
@@ -138,7 +249,7 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
     resize();
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally empty — runs once on mount
+  }, []);
 
   // ── Create RoughCanvas once ────────────────────────────────────────────────
   useEffect(() => {
@@ -154,21 +265,21 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
     if (!canvas || !rc) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    renderCanvas(ctx, transientShapes ?? shapes, rc, selectedId);
-  }, [shapes, transientShapes, selectedId]);
+    const baseShapes = transientAll ?? [...shapes, ...remoteShapes];
+    const streams = Array.from(remoteStreams.values());
+    renderCanvas(ctx, [...baseShapes, ...streams], rc, selectedId);
+  }, [shapes, transientAll, remoteShapes, remoteStreams, selectedId]);
 
-  // ── Imperative draw (called in mousemove — bypasses React for 60fps) ───────
-  const drawImmediate = useCallback(
-    (displayShapes: DrawingShape[]) => {
-      const canvas = canvasRef.current;
-      const rc = roughCanvasRef.current;
-      if (!canvas || !rc) return;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      renderCanvas(ctx, displayShapes, rc, null);
-    },
-    []
-  );
+  // ── Imperative draw (bypasses React state for 60fps local preview) ─────────
+  const drawImmediate = useCallback((localWithPreview: DrawingShape[]) => {
+    const canvas = canvasRef.current;
+    const rc = roughCanvasRef.current;
+    if (!canvas || !rc) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const streams = Array.from(remoteStreamsRef.current.values());
+    renderCanvas(ctx, [...localWithPreview, ...remoteShapesRef.current, ...streams], rc, null);
+  }, []);
 
   // ── Coordinate helper ──────────────────────────────────────────────────────
   const getPos = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -187,13 +298,13 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
   // ── Mouse events ───────────────────────────────────────────────────────────
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (e.button !== 0) return; // left-click only
+    if (e.button !== 0) return;
     const { x, y } = getPos(e);
     startPosRef.current = { x, y };
 
     if (activeTool === "select") {
-      const displayShapes = transientShapes ?? shapes;
-      const hit = hitTest(displayShapes, x, y);
+      const allShapes = [...shapes, ...remoteShapes];
+      const hit = hitTest(allShapes, x, y);
       setSelectedId(hit?.id ?? null);
       if (hit) {
         dragStateRef.current = {
@@ -208,14 +319,19 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
     }
 
     if (activeTool === "eraser") {
-      const displayShapes = transientShapes ?? shapes;
-      const hit = hitTest(displayShapes, x, y);
+      const allShapes = [...shapes, ...remoteShapes];
+      const hit = hitTest(allShapes, x, y);
       if (hit) {
-        const next = shapes.filter((s) => s.id !== hit.id);
-        commit(next);
-        if (selectedId === hit.id) setSelectedId(null);
+        const isRemote = remoteShapes.some((s) => s.id === hit.id);
+        if (isRemote) {
+          setRemoteShapes((prev) => prev.filter((s) => s.id !== hit.id));
+        } else {
+          commit(shapes.filter((s) => s.id !== hit.id));
+          if (selectedId === hit.id) setSelectedId(null);
+        }
+        void sendEraser([hit.id]);
       }
-      isDrawingRef.current = true; // keep erasing on drag
+      isDrawingRef.current = true;
       return;
     }
 
@@ -224,32 +340,16 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
     setSelectedId(null);
 
     const base = newBase();
-
     let shape: DrawingShape;
+
     if (activeTool === "pencil") {
       const s: PencilShape = { ...base, type: "pencil", points: [[x, y]] };
       shape = s;
     } else if (activeTool === "rect") {
-      const s: RectShape = {
-        ...base,
-        type: "rect",
-        x,
-        y,
-        w: 0,
-        h: 0,
-        fillColor: settings.fillColor,
-      };
+      const s: RectShape = { ...base, type: "rect", x, y, w: 0, h: 0, fillColor: settings.fillColor };
       shape = s;
     } else if (activeTool === "ellipse") {
-      const s: EllipseShape = {
-        ...base,
-        type: "ellipse",
-        cx: x,
-        cy: y,
-        rx: 0,
-        ry: 0,
-        fillColor: settings.fillColor,
-      };
+      const s: EllipseShape = { ...base, type: "ellipse", cx: x, cy: y, rx: 0, ry: 0, fillColor: settings.fillColor };
       shape = s;
     } else if (activeTool === "line") {
       const s: LineShape = { ...base, type: "line", x1: x, y1: y, x2: x, y2: y };
@@ -266,16 +366,18 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const { x, y } = getPos(e);
 
+    // Always send cursor position (throttled inside the hook)
+    sendCursorMove(x, y);
+
     // ── Drag-move ────────────────────────────────────────────────────────────
     if (activeTool === "select" && dragStateRef.current) {
       const drag = dragStateRef.current;
       const dx = x - drag.startMouseX;
       const dy = y - drag.startMouseY;
       const movedShape = translateShape(drag.snapshot, dx, dy);
-      const next = shapes.map((s) =>
-        s.id === drag.shapeId ? movedShape : s
-      );
-      setTransientShapes(next); // triggers render effect
+      const allShapes = [...shapes, ...remoteShapes];
+      const next = allShapes.map((s) => (s.id === drag.shapeId ? movedShape : s));
+      setTransientAll(next);
       return;
     }
 
@@ -283,12 +385,17 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
 
     // ── Eraser drag ───────────────────────────────────────────────────────────
     if (activeTool === "eraser") {
-      const displayShapes = transientShapes ?? shapes;
-      const hit = hitTest(displayShapes, x, y);
+      const allShapes = [...shapes, ...remoteShapes];
+      const hit = hitTest(allShapes, x, y);
       if (hit) {
-        const next = shapes.filter((s) => s.id !== hit.id);
-        commit(next);
-        if (selectedId === hit.id) setSelectedId(null);
+        const isRemote = remoteShapes.some((s) => s.id === hit.id);
+        if (isRemote) {
+          setRemoteShapes((prev) => prev.filter((s) => s.id !== hit.id));
+        } else {
+          commit(shapes.filter((s) => s.id !== hit.id));
+          if (selectedId === hit.id) setSelectedId(null);
+        }
+        void sendEraser([hit.id]);
       }
       return;
     }
@@ -299,44 +406,24 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
 
     const sx = startPosRef.current.x;
     const sy = startPosRef.current.y;
-
     let updated: DrawingShape;
 
     if (cur.type === "pencil") {
-      const next: PencilShape = {
-        ...cur,
-        points: [...cur.points, [x, y]],
-      };
-      updated = next;
+      updated = { ...cur, points: [...cur.points, [x, y]] };
     } else if (cur.type === "rect") {
-      const next: RectShape = {
-        ...cur,
-        x: Math.min(sx, x),
-        y: Math.min(sy, y),
-        w: Math.abs(x - sx),
-        h: Math.abs(y - sy),
-      };
-      updated = next;
+      updated = { ...cur, x: Math.min(sx, x), y: Math.min(sy, y), w: Math.abs(x - sx), h: Math.abs(y - sy) };
     } else if (cur.type === "ellipse") {
-      const next: EllipseShape = {
-        ...cur,
-        cx: (sx + x) / 2,
-        cy: (sy + y) / 2,
-        rx: Math.abs(x - sx) / 2,
-        ry: Math.abs(y - sy) / 2,
-      };
-      updated = next;
+      updated = { ...cur, cx: (sx + x) / 2, cy: (sy + y) / 2, rx: Math.abs(x - sx) / 2, ry: Math.abs(y - sy) / 2 };
     } else if (cur.type === "line") {
-      const next: LineShape = { ...cur, x2: x, y2: y };
-      updated = next;
+      updated = { ...cur, x2: x, y2: y };
     } else {
-      const next: ArrowShape = { ...cur, x2: x, y2: y };
-      updated = next;
+      updated = { ...cur, x2: x, y2: y };
     }
 
     currentShapeRef.current = updated;
-    // Bypass React — draw directly for 60fps
     drawImmediate([...shapes, updated]);
+    // Send stream preview (throttled inside hook)
+    void sendStreamShape(updated);
   };
 
   const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -347,16 +434,21 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
       const dx = x - drag.startMouseX;
       const dy = y - drag.startMouseY;
 
-      // Only commit if the shape actually moved
       if (Math.hypot(dx, dy) > 1) {
         const movedShape = translateShape(drag.snapshot, dx, dy);
-        const next = shapes.map((s) =>
-          s.id === drag.shapeId ? movedShape : s
-        );
-        commit(next);
+        const isRemote = remoteShapes.some((s) => s.id === drag.shapeId);
+
+        if (isRemote) {
+          // Migrate remote shape into local undo history
+          setRemoteShapes((prev) => prev.filter((s) => s.id !== drag.shapeId));
+          commit([...shapes, movedShape]);
+        } else {
+          commit(shapes.map((s) => (s.id === drag.shapeId ? movedShape : s)));
+        }
+        void sendUpdate(movedShape);
       }
 
-      setTransientShapes(null);
+      setTransientAll(null);
       dragStateRef.current = null;
       isDrawingRef.current = false;
       return;
@@ -369,15 +461,10 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
     const shape = currentShapeRef.current;
     currentShapeRef.current = null;
 
-    if (
-      shape &&
-      activeTool !== "select" &&
-      activeTool !== "eraser" &&
-      isSignificantShape(shape)
-    ) {
+    if (shape && activeTool !== "select" && activeTool !== "eraser" && isSignificantShape(shape)) {
       commit([...shapes, shape]);
+      void sendDraw(shape);
     } else {
-      // Re-render without the preview shape
       drawImmediate(shapes);
     }
   };
@@ -388,21 +475,24 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
-      // Undo / Redo
       if (e.ctrlKey || e.metaKey) {
         if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
         if (e.key === "z" && e.shiftKey)  { e.preventDefault(); redo(); return; }
         if (e.key === "y")                { e.preventDefault(); redo(); return; }
       }
 
-      // Delete selected shape
       if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
-        commit(shapes.filter((s) => s.id !== selectedId));
+        const isRemote = remoteShapes.some((s) => s.id === selectedId);
+        if (isRemote) {
+          setRemoteShapes((prev) => prev.filter((s) => s.id !== selectedId));
+        } else {
+          commit(shapes.filter((s) => s.id !== selectedId));
+        }
+        void sendEraser([selectedId]);
         setSelectedId(null);
         return;
       }
 
-      // Tool shortcuts
       const toolMap: Record<string, Tool> = {
         s: "select", p: "pencil", r: "rect",
         e: "ellipse", l: "line", a: "arrow", x: "eraser",
@@ -413,17 +503,12 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [shapes, selectedId, undo, redo, commit]);
+  }, [shapes, remoteShapes, selectedId, undo, redo, commit, sendEraser]);
 
   // ── Cursor style ───────────────────────────────────────────────────────────
   const cursorMap: Record<Tool, string> = {
-    select: "default",
-    pencil: "crosshair",
-    rect: "crosshair",
-    ellipse: "crosshair",
-    line: "crosshair",
-    arrow: "crosshair",
-    eraser: "cell",
+    select: "default", pencil: "crosshair", rect: "crosshair",
+    ellipse: "crosshair", line: "crosshair", arrow: "crosshair", eraser: "cell",
   };
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -442,11 +527,11 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
         onClear={() => {
           clear();
           setSelectedId(null);
-          setTransientShapes(null);
+          setTransientAll(null);
         }}
       />
 
-      {/* Room info badge */}
+      {/* Connection status + room info badge */}
       <div className={styles.badge}>
         <button
           className={styles.backBtn}
@@ -459,7 +544,11 @@ export default function DrawCanvas({ roomId }: DrawCanvasProps) {
         <span>
           Room <strong>{roomId.slice(0, 8)}…</strong>
         </span>
+        <span className={isConnected ? styles.dotOnline : styles.dotOffline} title={isConnected ? "connected" : "connecting…"} />
       </div>
+
+      {/* Remote cursor overlay (position: absolute inside wrapper) */}
+      <CursorOverlay cursors={cursors} myConnectionId={connectionId} />
 
       <canvas
         ref={canvasRef}

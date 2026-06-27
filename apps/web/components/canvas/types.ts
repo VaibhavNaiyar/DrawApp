@@ -81,3 +81,16 @@ export interface DragState {
   /** Deep copy of the shape at drag-start so we always apply total delta, not incremental */
   snapshot: DrawingShape;
 }
+
+// ─── Remote cursor presence ────────────────────────────────────────────────────
+
+export interface RemoteCursor {
+  connectionId: string;
+  userId: string;
+  userName: string;
+  /** Cursor color derived from userId — stable per user across sessions */
+  color: string;
+  /** Canvas-element-relative coordinates in px */
+  x: number;
+  y: number;
+}

@@ -8,14 +8,17 @@ export default async function RoomPage({
 }: {
   params: Promise<{ roomId: string }>;
 }) {
-  // Run auth and params resolution in parallel
   const [session, { roomId }] = await Promise.all([auth(), params]);
 
   if (!session?.user) redirect("/signin");
 
   return (
     <div className={styles.container}>
-      <DrawCanvas roomId={roomId} />
+      <DrawCanvas
+        roomId={roomId}
+        userId={session.user.id}
+        userName={session.user.name ?? "Anonymous"}
+      />
     </div>
   );
 }

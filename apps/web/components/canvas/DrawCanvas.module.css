@@ -52,3 +52,22 @@
 .backBtn:hover {
   color: rgba(255, 255, 255, 0.9);
 }
+
+/* WS connection status dot */
+.dotOnline {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e88;
+  flex-shrink: 0;
+}
+
+.dotOffline {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b88;
+  flex-shrink: 0;
+}
