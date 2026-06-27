@@ -13,12 +13,6 @@ declare module "next-auth" {
   }
 }
 
-declare module "next-auth/jwt" {
-  interface JWT {
-    userId?: string;
-  }
-}
-
 // ─── NextAuth Config ──────────────────────────────────────────────────────────
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -48,13 +42,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   callbacks: {
     async jwt({ token, user }) {
-      if (user?.id) {
-        token.userId = user.id;
-      }
+      // NextAuth v5 automatically puts user.id into token.sub on sign-in
+      if (user?.id) token.sub = user.id;
       return token;
     },
     async session({ session, token }) {
-      session.user.id = (token.userId ?? token.sub) as string;
+      session.user.id = (token.sub ?? "") as string;
       return session;
     },
   },

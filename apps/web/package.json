@@ -18,6 +18,8 @@
     "jsonwebtoken": "^9.0.2",
     "next": "16.2.0",
     "next-auth": "beta",
+    "perfect-freehand": "^1.2.2",
+    "roughjs": "^4.6.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
