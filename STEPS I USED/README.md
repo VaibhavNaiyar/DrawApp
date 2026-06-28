@@ -1224,8 +1224,154 @@ const drawImmediate = (localWithPreview: DrawingShape[]) => {
 
 ---
 
+---
+
+## Phase 6 — Polish
+
+**Goal:** Complete the user-facing experience: My Rooms on dashboard, E2EE key persistence, participants indicator, copy-link button, mobile touch support, and explicit LEAVE on back navigation.
+
+---
+
+### 6.1 Files Created / Modified
+
+| File | Change |
+|---|---|
+| `app/api/rooms/route.ts` | **New** — `GET /api/rooms` returns user's 10 most recent rooms from DB |
+| `app/dashboard/page.tsx` | Added "My Rooms" section (fetches rooms on mount, lists with Open button) |
+| `app/dashboard/dashboard.module.css` | Added room list, section title, buttonSm styles |
+| `components/canvas/crypto.ts` | Added `getStoredKey` / `storeKey` (localStorage key persistence) |
+| `components/canvas/useWebSocket.ts` | Added `sendLeave(roomId)` to `UseWebSocketReturn` |
+| `components/canvas/DrawCanvas.tsx` | Full refactor: touch support, copy-link, participants count, leave via WS, localStorage key init |
+| `components/canvas/DrawCanvas.module.css` | Added `.online`, `.copyBtn` styles |
+
+---
+
+### 6.2 E2EE Key Persistence (localStorage)
+
+**Problem:** Every time a user navigated to `/room/<id>` without a `#fragment`, a NEW AES-GCM key was generated. Old shapes (encrypted with the previous key) would fail to decrypt and be silently dropped.
+
+**Solution:** Store the room's encryption key in `localStorage` under the key `drawapp_key_<roomId>`. On mount, `DrawCanvas` now follows this priority:
+
+```
+1. URL fragment (#key)  — highest priority, used when opening a shared link
+2. localStorage         — returning user on the same browser
+3. generate new key     — first visit, no fragment, no stored key
+```
+
+After determining the key, it is always written back to **both** localStorage and the URL fragment, so:
+- Sharing the current URL (with `#fragment`) gives the recipient the correct key.
+- Returning to the same room (by clicking "Open →" in My Rooms) reuses the key automatically.
+
+```typescript
+// Priority chain in DrawCanvas useEffect:
+const fragment = getKeyFromFragment();
+if (fragment) {
+  key = await importKeyFromBase64url(fragment);
+} else {
+  const stored = await getStoredKey(roomId);
+  key = stored ?? (await generateKey());
+}
+const b64 = await exportKeyToBase64url(key);
+setKeyInFragment(b64);
+await storeKey(roomId, key);   // persist for return visits
+cryptoKeyRef.current = key;
+```
+
+---
+
+### 6.3 My Rooms on Dashboard
+
+**API route:** `GET /api/rooms`
+- Uses `auth()` server-side to get the session.
+- Queries `prismaClient.room.findMany({ where: { adminId: userId }, orderBy: { updatedAt: "desc" }, take: 10 })`.
+- Returns `{ rooms: [{ id, createdAt, updatedAt }] }`.
+
+**Dashboard:** On mount, fetches `/api/rooms` and renders a list below the Create/Join cards. Each row shows:
+- Short room ID (first 8 chars of the cuid)
+- Creation date
+- "Open →" button → navigates to `/room/<id>` (localStorage key is reused automatically)
+
+Note: The list only shows rooms the user **created** (`adminId = userId`). Rooms joined as a guest aren't tracked in the current schema (no `UserRoom` join table). This is a known limitation for Phase 6.
+
+---
+
+### 6.4 Participants Indicator
+
+`useWebSocket` already returns `participants: RoomParticipants[]` (updated on `USER_JOINED`, `USER_LEFT`, `EXISTING_PARTICIPANTS` events). `DrawCanvas` now shows:
+
+```
+Room abc123… | 3 online | Copy Link  ●
+```
+
+The "N online" badge:
+- Green text on a subtle green background.
+- `title` attribute lists all participant userNames (visible on hover).
+- Hidden when count is 0 (not yet connected or empty room).
+
+---
+
+### 6.5 Copy Link Button
+
+A "Copy Link" button in the room badge copies `window.location.href` to the clipboard. Since the URL always contains the `#key` fragment (set during crypto init), the copied link is a complete invite link — the recipient can open it and immediately decrypt all shapes.
+
+Visual feedback: button text changes to "Copied!" for 1.8 seconds.
+
+---
+
+### 6.6 Explicit Leave (LEAVE WS event)
+
+The "← back" button now calls `handleLeave()`:
+1. `sendLeave(roomId)` — sends `{ type: WsDataType.LEAVE, roomId }` to draw-ws.
+2. `router.push("/dashboard")` — navigates away, causing component unmount.
+3. On unmount, `useWebSocket`'s cleanup closes the WebSocket socket.
+
+This sequence updates other users' participant lists immediately (via `USER_LEFT` broadcast from the server) instead of waiting for the server to detect the TCP close, which can take seconds.
+
+---
+
+### 6.7 Mobile Touch Support
+
+The canvas now handles touch events alongside mouse events. The core pointer logic was refactored into three shared functions:
+
+```typescript
+function pointerDown(x: number, y: number) { ... }  // tool-specific down logic
+function pointerMove(x: number, y: number) { ... }  // tool-specific move logic
+function pointerUp(x: number, y: number)   { ... }  // commit + send
+```
+
+Thin wrappers extract coordinates and call the shared functions:
+
+```typescript
+// Mouse:
+handleMouseDown  → e.clientX / e.clientY → pointerDown
+handleMouseMove  → e.clientX / e.clientY → pointerMove
+handleMouseUp    → e.clientX / e.clientY → pointerUp
+
+// Touch:
+handleTouchStart → e.touches[0].clientX/Y        → pointerDown
+handleTouchMove  → e.touches[0].clientX/Y        → pointerMove
+handleTouchEnd   → e.changedTouches[0].clientX/Y → pointerUp
+```
+
+All touch handlers call `e.preventDefault()` to suppress browser scroll/zoom during drawing. The canvas element gets `style={{ touchAction: "none" }}` to hint to the browser that we're handling touch ourselves.
+
+`changedTouches[0]` (not `touches[0]`) is used in `touchend` because `touches` doesn't include the finger that just lifted.
+
+---
+
+### 6.8 How to Test Phase 6
+
+1. Create a room → you land in the canvas.
+2. Click "Copy Link" → paste in a new browser tab → both windows share the same key, shapes decrypt correctly.
+3. On the dashboard, "My Rooms" shows your created rooms. Click "Open →" → key is loaded from localStorage, old shapes are visible.
+4. On mobile (or DevTools device mode), draw with a finger — all tools work via touch.
+5. Hover over the "N online" badge to see participant names.
+6. Click "← back" → you're immediately removed from the participants list in other windows.
+
+---
+
 ## What Comes Next
 
 | Phase | Work |
 |---|---|
-| **Phase 6** | Polish: room list UI, participant panel, room close/leave, mobile touch support |
+| **Phase 7** | Deployment: Docker Compose for all services, production env, nginx reverse proxy |

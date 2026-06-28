@@ -32,6 +32,8 @@ export interface UseWebSocketReturn {
   sendEraser(ids: string[]): void;
   sendUpdate(shape: DrawingShape): Promise<void>;
   sendCursorMove(x: number, y: number): void;
+  /** Send LEAVE for a room then let the component unmount to close the socket */
+  sendLeave(rid: string): void;
 }
 
 // ─── Hook ──────────────────────────────────────────────────────────────────
@@ -311,6 +313,11 @@ export function useWebSocket(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawSend]);
 
+  const sendLeave = useCallback((rid: string) => {
+    rawSend(buildMsg({ type: WsDataType.LEAVE, roomId: rid }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawSend]);
+
   return {
     isConnected,
     connectionId,
@@ -320,5 +327,6 @@ export function useWebSocket(
     sendEraser,
     sendUpdate,
     sendCursorMove,
+    sendLeave,
   };
 }

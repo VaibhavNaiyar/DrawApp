@@ -63,6 +63,31 @@ export async function decrypt(key: CryptoKey, b64url: string): Promise<string> {
   return new TextDecoder().decode(plaintext);
 }
 
+// ─── localStorage key persistence ─────────────────────────────────────────
+// Storing keys in localStorage (keyed by roomId) lets a user return to their
+// own room and decrypt existing shapes without re-sharing the link.
+// When a shared link (with #fragment) is opened, that key takes priority and
+// is written to localStorage, so the new key is persisted for future visits.
+
+const LS_PREFIX = "drawapp_key_";
+
+export async function getStoredKey(roomId: string): Promise<CryptoKey | null> {
+  if (typeof window === "undefined") return null;
+  const b64 = localStorage.getItem(LS_PREFIX + roomId);
+  if (!b64) return null;
+  try {
+    return await importKeyFromBase64url(b64);
+  } catch {
+    return null;
+  }
+}
+
+export async function storeKey(roomId: string, key: CryptoKey): Promise<void> {
+  if (typeof window === "undefined") return;
+  const b64 = await exportKeyToBase64url(key);
+  localStorage.setItem(LS_PREFIX + roomId, b64);
+}
+
 // ─── URL fragment helpers ──────────────────────────────────────────────────
 
 /** Returns the base64url key string from window.location.hash, or null. */

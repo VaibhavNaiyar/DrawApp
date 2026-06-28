@@ -196,11 +196,82 @@
   transform: translateY(-1px);
 }
 
+/* ── My Rooms ── */
+.myRooms {
+  width: 100%;
+  max-width: 760px;
+  margin-top: 32px;
+  animation: fadeUp 0.45s ease both;
+  animation-delay: 0.1s;
+}
+
+.sectionTitle {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-1);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+
+.roomList {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.roomItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 20px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.roomItem:hover {
+  border-color: var(--border-mid);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.roomInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.roomId {
+  font-family: var(--font-geist-mono, monospace);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-0);
+  letter-spacing: 0.02em;
+}
+
+.roomDate {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+/* Small button variant for room list */
+.buttonSm {
+  padding: 8px 16px;
+  font-size: 12px;
+}
+
 @media (max-width: 600px) {
   .grid {
     grid-template-columns: 1fr;
   }
   .main {
     padding: 40px 20px;
+    align-items: flex-start;
+  }
+  .roomItem {
+    padding: 12px 16px;
   }
 }

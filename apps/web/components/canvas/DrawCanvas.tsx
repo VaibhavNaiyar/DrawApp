@@ -25,6 +25,8 @@ import {
   importKeyFromBase64url,
   getKeyFromFragment,
   setKeyInFragment,
+  getStoredKey,
+  storeKey,
 } from "./crypto";
 import CursorOverlay from "./CursorOverlay";
 import Toolbar from "./Toolbar";
@@ -38,10 +40,6 @@ function makeId(): string {
     : `${Date.now()}-${Math.random()}`;
 }
 
-/**
- * Apply a total (dx, dy) displacement to a shape, using its original snapshot.
- * Always computed from the snapshot so floating-point errors don't accumulate.
- */
 function translateShape(shape: DrawingShape, dx: number, dy: number): DrawingShape {
   switch (shape.type) {
     case "pencil":
@@ -70,14 +68,10 @@ function isSignificantShape(shape: DrawingShape): boolean {
   }
 }
 
-// Deterministic color from a userId string (stays the same across sessions)
 function userColor(userId: string): string {
   let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    hash = (hash * 31 + userId.charCodeAt(i)) >>> 0;
-  }
-  const hue = hash % 360;
-  return `hsl(${hue}, 70%, 55%)`;
+  for (let i = 0; i < userId.length; i++) hash = (hash * 31 + userId.charCodeAt(i)) >>> 0;
+  return `hsl(${hash % 360}, 70%, 55%)`;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -95,7 +89,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const roughCanvasRef = useRef<RoughCanvas | null>(null);
 
-  // ── Drawing state (refs — no React re-render on update) ────────────────────
+  // ── Drawing refs ───────────────────────────────────────────────────────────
   const isDrawingRef = useRef(false);
   const startPosRef = useRef({ x: 0, y: 0 });
   const currentShapeRef = useRef<DrawingShape | null>(null);
@@ -112,25 +106,13 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     strokeWidth: 2,
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  /**
-   * transientAll: during drag-move, replaces the entire combined display
-   * (local shapes + remote shapes) without polluting undo history.
-   * Committed once on mouseUp, then cleared.
-   */
   const [transientAll, setTransientAll] = useState<DrawingShape[] | null>(null);
-
-  // Remote shapes from other users (existing room shapes + others' draws).
-  // NOT in local undo history.
   const [remoteShapes, setRemoteShapes] = useState<DrawingShape[]>([]);
-
-  // In-progress stream previews from other users (one per connection).
-  // Key = connectionId.
   const [remoteStreams, setRemoteStreams] = useState<Map<string, DrawingShape>>(new Map());
-
-  // Cursor positions for other users
   const [cursors, setCursors] = useState<Map<string, RemoteCursor>>(new Map());
+  const [copied, setCopied] = useState(false);
 
-  // ── Ref mirrors for use inside drawImmediate (bypasses React renders) ───────
+  // ── Ref mirrors for drawImmediate (no React re-render cost) ───────────────
   const remoteShapesRef = useRef<DrawingShape[]>([]);
   const remoteStreamsRef = useRef<Map<string, DrawingShape>>(new Map());
   useEffect(() => { remoteShapesRef.current = remoteShapes; }, [remoteShapes]);
@@ -139,111 +121,78 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   // ── History ────────────────────────────────────────────────────────────────
   const { shapes, commit, undo, redo, clear, canUndo, canRedo } = useDrawHistory();
 
-  // ── WS handlers (stable callbacks — all delegate to refs/setState) ─────────
+  // ── WS handlers ───────────────────────────────────────────────────────────
   const wsHandlers: WsHandlers = {
-    onExistingShapes(existingShapes) {
-      setRemoteShapes(existingShapes);
-    },
+    onExistingShapes(existingShapes) { setRemoteShapes(existingShapes); },
     onRemoteDraw(shape) {
       setRemoteShapes((prev) => [...prev, shape]);
-      // Clear any pending stream preview for that user (they committed)
       setRemoteStreams((prev) => {
-        // We don't know which connectionId drew this shape (DRAW event has connectionId)
-        // But since we received the final shape, we clean up any matching stream by shape id
         const next = new Map(prev);
-        for (const [connId, s] of next) {
-          if (s.id === shape.id) { next.delete(connId); break; }
-        }
+        for (const [id, s] of next) { if (s.id === shape.id) { next.delete(id); break; } }
         return next;
       });
     },
-    onRemoteEraser(ids) {
-      setRemoteShapes((prev) => prev.filter((s) => !ids.includes(s.id)));
-    },
-    onRemoteUpdate(shape) {
-      setRemoteShapes((prev) => prev.map((s) => (s.id === shape.id ? shape : s)));
-    },
+    onRemoteEraser(ids) { setRemoteShapes((prev) => prev.filter((s) => !ids.includes(s.id))); },
+    onRemoteUpdate(shape) { setRemoteShapes((prev) => prev.map((s) => (s.id === shape.id ? shape : s))); },
     onRemoteStream(connectionId, shape) {
-      setRemoteStreams((prev) => {
-        const next = new Map(prev);
-        next.set(connectionId, shape);
-        return next;
-      });
+      setRemoteStreams((prev) => { const n = new Map(prev); n.set(connectionId, shape); return n; });
     },
     onRemoteStreamUpdate(connectionId, shape) {
-      setRemoteStreams((prev) => {
-        const next = new Map(prev);
-        next.set(connectionId, shape);
-        return next;
-      });
+      setRemoteStreams((prev) => { const n = new Map(prev); n.set(connectionId, shape); return n; });
     },
     onCursorMove(connectionId, uid, uname, x, y) {
       setCursors((prev) => {
-        const next = new Map(prev);
-        next.set(connectionId, {
-          connectionId,
-          userId: uid,
-          userName: uname,
-          color: userColor(uid),
-          x,
-          y,
-        });
-        return next;
+        const n = new Map(prev);
+        n.set(connectionId, { connectionId, userId: uid, userName: uname, color: userColor(uid), x, y });
+        return n;
       });
     },
-    onParticipants(_participants) { /* no-op — participants not displayed in this UI yet */ },
-    onUserJoined(_participants) {},
+    onParticipants() {},
+    onUserJoined() {},
     onUserLeft(connectionId) {
-      setCursors((prev) => {
-        const next = new Map(prev);
-        next.delete(connectionId);
-        return next;
-      });
-      setRemoteStreams((prev) => {
-        const next = new Map(prev);
-        next.delete(connectionId);
-        return next;
-      });
+      setCursors((prev) => { const n = new Map(prev); n.delete(connectionId); return n; });
+      setRemoteStreams((prev) => { const n = new Map(prev); n.delete(connectionId); return n; });
     },
   };
 
-  const { isConnected, connectionId, sendDraw, sendStreamShape, sendEraser, sendUpdate, sendCursorMove } =
+  const { isConnected, connectionId, participants, sendDraw, sendStreamShape, sendEraser, sendUpdate, sendCursorMove, sendLeave } =
     useWebSocket(roomId, userId, userName, cryptoKeyRef, wsHandlers);
 
-  // ── E2EE initialisation (runs once on mount) ───────────────────────────────
+  // ── E2EE initialisation ────────────────────────────────────────────────────
+  // Priority: URL fragment → localStorage → generate new
   useEffect(() => {
     async function initCrypto() {
+      let key: CryptoKey;
       const fragment = getKeyFromFragment();
       if (fragment) {
-        cryptoKeyRef.current = await importKeyFromBase64url(fragment);
+        key = await importKeyFromBase64url(fragment);
       } else {
-        const key = await generateKey();
-        const b64 = await exportKeyToBase64url(key);
-        setKeyInFragment(b64);
-        cryptoKeyRef.current = key;
+        const stored = await getStoredKey(roomId);
+        key = stored ?? (await generateKey());
       }
+      // Always persist key in fragment + localStorage so sharing & return visits work
+      const b64 = await exportKeyToBase64url(key);
+      setKeyInFragment(b64);
+      await storeKey(roomId, key);
+      cryptoKeyRef.current = key;
     }
     initCrypto();
-  }, []);
+  }, [roomId]);
 
   // ── Canvas size ────────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     function resize() {
       if (!canvas) return;
       canvas.width = canvas.offsetWidth;
       canvas.height = canvas.offsetHeight;
       const rc = roughCanvasRef.current;
-      if (!rc) return;
       const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      const baseShapes = transientAll ?? [...shapes, ...remoteShapes];
-      const streams = Array.from(remoteStreams.values());
-      renderCanvas(ctx, [...baseShapes, ...streams], rc, selectedId);
+      if (!rc || !ctx) return;
+      const base = transientAll ?? [...shapes, ...remoteShapes];
+      renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId);
     }
-
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
     resize();
@@ -258,36 +207,39 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     roughCanvasRef.current = createRoughCanvas(canvas);
   }, []);
 
-  // ── Render loop (triggered by committed state changes) ─────────────────────
+  // ── Render loop (state-driven) ─────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     const rc = roughCanvasRef.current;
     if (!canvas || !rc) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const baseShapes = transientAll ?? [...shapes, ...remoteShapes];
-    const streams = Array.from(remoteStreams.values());
-    renderCanvas(ctx, [...baseShapes, ...streams], rc, selectedId);
+    const base = transientAll ?? [...shapes, ...remoteShapes];
+    renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId);
   }, [shapes, transientAll, remoteShapes, remoteStreams, selectedId]);
 
-  // ── Imperative draw (bypasses React state for 60fps local preview) ─────────
+  // ── Imperative draw (bypasses React for 60fps local preview) ──────────────
   const drawImmediate = useCallback((localWithPreview: DrawingShape[]) => {
     const canvas = canvasRef.current;
     const rc = roughCanvasRef.current;
     if (!canvas || !rc) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const streams = Array.from(remoteStreamsRef.current.values());
-    renderCanvas(ctx, [...localWithPreview, ...remoteShapesRef.current, ...streams], rc, null);
+    renderCanvas(
+      ctx,
+      [...localWithPreview, ...remoteShapesRef.current, ...Array.from(remoteStreamsRef.current.values())],
+      rc,
+      null
+    );
   }, []);
 
-  // ── Coordinate helper ──────────────────────────────────────────────────────
-  const getPos = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // ── Position helpers ───────────────────────────────────────────────────────
+  const getCanvasPos = useCallback((clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  };
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }, []);
 
   const newBase = () => ({
     id: makeId(),
@@ -295,11 +247,9 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     strokeWidth: settings.strokeWidth,
   });
 
-  // ── Mouse events ───────────────────────────────────────────────────────────
+  // ── Core pointer handlers (shared by mouse and touch) ──────────────────────
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (e.button !== 0) return;
-    const { x, y } = getPos(e);
+  const pointerDown = useCallback((x: number, y: number) => {
     startPosRef.current = { x, y };
 
     if (activeTool === "select") {
@@ -307,12 +257,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       const hit = hitTest(allShapes, x, y);
       setSelectedId(hit?.id ?? null);
       if (hit) {
-        dragStateRef.current = {
-          shapeId: hit.id,
-          startMouseX: x,
-          startMouseY: y,
-          snapshot: cloneShape(hit),
-        };
+        dragStateRef.current = { shapeId: hit.id, startMouseX: x, startMouseY: y, snapshot: cloneShape(hit) };
         isDrawingRef.current = true;
       }
       return;
@@ -335,7 +280,6 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       return;
     }
 
-    // Drawing tools
     isDrawingRef.current = true;
     setSelectedId(null);
 
@@ -361,29 +305,24 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
     currentShapeRef.current = shape;
     drawImmediate([...shapes, shape]);
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, settings, shapes, remoteShapes, selectedId, commit, sendEraser, drawImmediate]);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const { x, y } = getPos(e);
-
-    // Always send cursor position (throttled inside the hook)
+  const pointerMove = useCallback((x: number, y: number) => {
     sendCursorMove(x, y);
 
-    // ── Drag-move ────────────────────────────────────────────────────────────
     if (activeTool === "select" && dragStateRef.current) {
       const drag = dragStateRef.current;
       const dx = x - drag.startMouseX;
       const dy = y - drag.startMouseY;
       const movedShape = translateShape(drag.snapshot, dx, dy);
       const allShapes = [...shapes, ...remoteShapes];
-      const next = allShapes.map((s) => (s.id === drag.shapeId ? movedShape : s));
-      setTransientAll(next);
+      setTransientAll(allShapes.map((s) => (s.id === drag.shapeId ? movedShape : s)));
       return;
     }
 
     if (!isDrawingRef.current) return;
 
-    // ── Eraser drag ───────────────────────────────────────────────────────────
     if (activeTool === "eraser") {
       const allShapes = [...shapes, ...remoteShapes];
       const hit = hitTest(allShapes, x, y);
@@ -400,7 +339,6 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       return;
     }
 
-    // ── Shape preview ─────────────────────────────────────────────────────────
     const cur = currentShapeRef.current;
     if (!cur) return;
 
@@ -422,24 +360,20 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
     currentShapeRef.current = updated;
     drawImmediate([...shapes, updated]);
-    // Send stream preview (throttled inside hook)
     void sendStreamShape(updated);
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, shapes, remoteShapes, selectedId, commit, sendEraser, sendCursorMove, sendStreamShape, drawImmediate]);
 
-  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    // ── Commit drag-move ──────────────────────────────────────────────────────
+  const pointerUp = useCallback((x: number, y: number) => {
     if (activeTool === "select" && dragStateRef.current) {
       const drag = dragStateRef.current;
-      const { x, y } = getPos(e);
       const dx = x - drag.startMouseX;
       const dy = y - drag.startMouseY;
 
       if (Math.hypot(dx, dy) > 1) {
         const movedShape = translateShape(drag.snapshot, dx, dy);
         const isRemote = remoteShapes.some((s) => s.id === drag.shapeId);
-
         if (isRemote) {
-          // Migrate remote shape into local undo history
           setRemoteShapes((prev) => prev.filter((s) => s.id !== drag.shapeId));
           commit([...shapes, movedShape]);
         } else {
@@ -457,7 +391,6 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
 
-    // ── Commit drawn shape ────────────────────────────────────────────────────
     const shape = currentShapeRef.current;
     currentShapeRef.current = null;
 
@@ -467,6 +400,45 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     } else {
       drawImmediate(shapes);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, shapes, remoteShapes, commit, sendDraw, sendUpdate, drawImmediate]);
+
+  // ── Mouse event wrappers ───────────────────────────────────────────────────
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return;
+    const { x, y } = getCanvasPos(e.clientX, e.clientY);
+    pointerDown(x, y);
+  };
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { x, y } = getCanvasPos(e.clientX, e.clientY);
+    pointerMove(x, y);
+  };
+  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { x, y } = getCanvasPos(e.clientX, e.clientY);
+    pointerUp(x, y);
+  };
+
+  // ── Touch event wrappers ───────────────────────────────────────────────────
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault(); // prevent scroll / zoom
+    const t = e.touches[0];
+    if (!t) return;
+    const { x, y } = getCanvasPos(t.clientX, t.clientY);
+    pointerDown(x, y);
+  };
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const t = e.touches[0];
+    if (!t) return;
+    const { x, y } = getCanvasPos(t.clientX, t.clientY);
+    pointerMove(x, y);
+  };
+  const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const { x, y } = getCanvasPos(t.clientX, t.clientY);
+    pointerUp(x, y);
   };
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
@@ -500,10 +472,23 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       const tool = toolMap[e.key.toLowerCase()];
       if (tool) setActiveTool(tool);
     }
-
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [shapes, remoteShapes, selectedId, undo, redo, commit, sendEraser]);
+
+  // ── Copy link ──────────────────────────────────────────────────────────────
+  const handleCopyLink = useCallback(() => {
+    navigator.clipboard.writeText(window.location.href).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  }, []);
+
+  // ── Leave room ─────────────────────────────────────────────────────────────
+  const handleLeave = useCallback(() => {
+    sendLeave(roomId);
+    router.push("/dashboard");
+  }, [sendLeave, roomId, router]);
 
   // ── Cursor style ───────────────────────────────────────────────────────────
   const cursorMap: Record<Tool, string> = {
@@ -511,8 +496,11 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     ellipse: "crosshair", line: "crosshair", arrow: "crosshair", eraser: "cell",
   };
 
-  // ─── Render ────────────────────────────────────────────────────────────────
+  // ── Online count ───────────────────────────────────────────────────────────
+  // participants from WS includes all users in the room (deduplicated by userId)
+  const onlineCount = participants.length;
 
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <div className={styles.wrapper}>
       <Toolbar
@@ -524,40 +512,52 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
         onSettingsChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
         onUndo={undo}
         onRedo={redo}
-        onClear={() => {
-          clear();
-          setSelectedId(null);
-          setTransientAll(null);
-        }}
+        onClear={() => { clear(); setSelectedId(null); setTransientAll(null); }}
       />
 
-      {/* Connection status + room info badge */}
+      {/* Room info badge */}
       <div className={styles.badge}>
-        <button
-          className={styles.backBtn}
-          onClick={() => router.push("/dashboard")}
-          type="button"
-        >
+        <button className={styles.backBtn} onClick={handleLeave} type="button">
           ← back
         </button>
         <span>|</span>
-        <span>
-          Room <strong>{roomId.slice(0, 8)}…</strong>
-        </span>
-        <span className={isConnected ? styles.dotOnline : styles.dotOffline} title={isConnected ? "connected" : "connecting…"} />
+        <span>Room <strong>{roomId.slice(0, 8)}…</strong></span>
+
+        {/* Participant count */}
+        {onlineCount > 0 && (
+          <span className={styles.online} title={participants.map((p) => p.userName).join(", ")}>
+            {onlineCount} online
+          </span>
+        )}
+
+        <span>|</span>
+
+        {/* Copy link */}
+        <button className={styles.copyBtn} onClick={handleCopyLink} type="button" title="Copy invite link (includes E2EE key)">
+          {copied ? "Copied!" : "Copy Link"}
+        </button>
+
+        {/* Connection dot */}
+        <span
+          className={isConnected ? styles.dotOnline : styles.dotOffline}
+          title={isConnected ? "connected" : "connecting…"}
+        />
       </div>
 
-      {/* Remote cursor overlay (position: absolute inside wrapper) */}
+      {/* Remote cursor overlay */}
       <CursorOverlay cursors={cursors} myConnectionId={connectionId} />
 
       <canvas
         ref={canvasRef}
         className={styles.canvas}
-        style={{ cursor: cursorMap[activeTool] }}
+        style={{ cursor: cursorMap[activeTool], touchAction: "none" }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       />
     </div>
   );
