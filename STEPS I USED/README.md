@@ -1,6 +1,93 @@
-# DrawApp — Build Journal
+# DrawApp — Complete Build Notes
 
-## Phase 1 - understanding the system architecture and  coding language
+A real-time collaborative whiteboard app built from scratch. Users can draw together in the same room with end-to-end encryption, live cursor presence, and persistent shape history.
+
+**Reference repo:** [coderomm/CollabyDraw](https://github.com/coderomm/CollabyDraw)
+
+---
+
+## Table of Contents
+
+- [Phase 1 — Architecture Audit](#phase-1--architecture-audit)
+- [Phase 2 — DB & Auth Alignment](#phase-2--db--auth-alignment)
+- [Phase 3 — Drawing WebSocket Server](#phase-3--drawing-websocket-server)
+- [Phase 4 — Frontend Core & Standalone Canvas](#phase-4--frontend-core--standalone-canvas)
+- [Phase 5 — Real-Time Sync & E2EE](#phase-5--real-time-sync--e2ee)
+- [Phase 6 — Polish](#phase-6--polish)
+- [Phase 7 — Deployment & Docker](#phase-7--deployment--docker)
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Monorepo | Turborepo + pnpm workspaces |
+| Frontend | Next.js 15, TypeScript |
+| Auth | NextAuth v5 (beta) — Credentials + JWT strategy |
+| Database | PostgreSQL 16 via Prisma v6 |
+| Drawing WS | Custom Node.js WebSocket server (port 8081) |
+| Chat WS | Original reference server (port 8080) — never removed |
+| HTTP API | Express (port 3001) |
+| Drawing lib | roughjs (shapes) + perfect-freehand (pencil) |
+| Encryption | Web Crypto API — AES-GCM-256 |
+| Deployment | Docker Compose, esbuild bundles, Next.js standalone |
+
+---
+
+## Phase 1 — Architecture Audit
+
+**Goal:** Understand the existing codebase and the reference repo before writing any code. Identify what to keep, what to replace, and what's missing.
+
+---
+
+### 1.1 — Monorepo Structure
+
+```
+DrawApp/
+├── apps/
+│   ├── web/              ← Next.js 15 frontend (port 3000)
+│   ├── http-backend/     ← Express REST API (port 3001)
+│   ├── ws-backend/       ← Original chat WebSocket server (port 8080)
+│   └── draw-ws/          ← NEW: Drawing WebSocket server (port 8081)
+├── packages/
+│   ├── common/           ← Shared types: WsDataType enum, WebSocketMessage, Zod schemas
+│   ├── backend-common/   ← Shared secrets: AUTH_SECRET, JWT_SECRET alias
+│   └── db/               ← Prisma client singleton
+├── docker/               ← One Dockerfile per service
+├── docker-compose.yml
+├── turbo.json
+└── pnpm-workspace.yaml
+```
+
+**Key decision:** Keep the existing `ws-backend` (chat server) completely intact as a learning reference. The drawing server is built as a separate service (`draw-ws`) on a different port so the two never interfere.
+
+---
+
+### 1.2 — Gaps Found in the Original Code
+
+| Area | Problem | Phase Fixed |
+|---|---|---|
+| Prisma | v5 with `previewFeatures = ["driverAdapters"]` — now stable in v6 | 2 |
+| Auth | Used `JWT_SECRET`, no NextAuth setup | 2 |
+| DB Schema | Integer room IDs (enumerable/guessable), `username` field, no `Shape` table | 2 |
+| WS events | Untyped string events (`"join_room"`, etc.) — no shared enum | 2 |
+| Draw WS | Didn't exist | 3 |
+| Canvas | Chat-based room page, no drawing functionality | 4 |
+| Encryption | None — shapes stored as plaintext | 5 |
+| Docker | Dockerfiles existed but had runtime bugs (no Prisma binary, wrong ports) | 7 |
+
+---
+
+### 1.3 — Rules Established
+
+1. **Never remove the chat `ws-backend`** — it stays as a working reference
+2. **Audit first, code second** — read existing code before modifying anything
+3. **One secret (`AUTH_SECRET`)** — shared across NextAuth, the WS token endpoint, and http-backend middleware
+4. **esbuild for all backends** — single bundled output file, faster than `tsc`, smaller Docker images
+5. **GitHub Actions per service** — path-based filtering so frontend changes don't rebuild the WS Docker image
+
+---
 
 ## Phase 2 — DB & Auth Alignment
 
@@ -1370,8 +1457,207 @@ All touch handlers call `e.preventDefault()` to suppress browser scroll/zoom dur
 
 ---
 
-## What Comes Next
+---
 
-| Phase | Work |
+## Phase 7 — Deployment & Docker
+
+**Goal:** Make every service buildable and runnable via Docker Compose. Fix all latent Docker bugs from earlier phases and establish a clean, reproducible build process.
+
+---
+
+### 7.1 Files Created / Modified
+
+| File | Change |
 |---|---|
-| **Phase 7** | Deployment: Docker Compose for all services, production env, nginx reverse proxy |
+| `.dockerignore` | **New** — excludes `node_modules`, `.next`, `dist`, `.git`, logs from Docker build context |
+| `apps/web/next.config.js` | Added `output: "standalone"` — required for the frontend Dockerfile's `.next/standalone` copy |
+| `apps/http-backend/package.json` | Switched build from `tsc -b` → esbuild; added `esbuild` devDependency |
+| `apps/ws-backend/package.json` | Same esbuild switch |
+| `apps/draw-ws/package.json` | Added `--external:@prisma/client` to esbuild (fixes Prisma native binary runtime error) |
+| `packages/db/package.json` | Added `db:deploy` script (`prisma migrate deploy`) for production migrations |
+| `docker/Dockerfile.draw-ws` | Full rewrite: 3-stage build, proper Prisma handling |
+| `docker/Dockerfile.http-backend` | Full rewrite: esbuild bundle, proper Prisma handling |
+| `docker/Dockerfile.websocket` | Full rewrite: esbuild bundle, proper Prisma handling |
+| `docker/Dockerfile.frontend` | Fixed: added `NEXT_PUBLIC_DRAW_WS_URL` ARG/ENV, removed unneeded pnpm in runner |
+| `docker/Dockerfile.migrate` | **New** — one-shot container that runs `prisma migrate deploy` and exits |
+| `docker-compose.yml` | Added `migrate` service, fixed port mapping (5433:5432), added `service_completed_successfully` deps |
+| `turbo.json` | Added `NEXT_PUBLIC_DRAW_WS_URL` and `NEXT_PUBLIC_HTTP_URL` to build env list |
+| `Makefile` | **New** — convenience commands: `up`, `down`, `build`, `rebuild`, `logs`, `migrate`, `shell-db`, `fresh` |
+
+---
+
+### 7.2 Bugs Fixed in Existing Dockerfiles
+
+#### Bug 1: Missing `output: 'standalone'` in Next.js config
+`Dockerfile.frontend` copied from `.next/standalone` but `next.config.js` had no `output: "standalone"`. That directory is only generated when standalone mode is configured. The build would succeed but the runner stage would fail at COPY.
+
+**Fix:** Added `output: "standalone"` to `next.config.js`.
+
+#### Bug 2: Missing `NEXT_PUBLIC_DRAW_WS_URL` in `Dockerfile.frontend`
+`docker-compose.yml` passed `NEXT_PUBLIC_DRAW_WS_URL` as a build arg, but the Dockerfile never declared `ARG NEXT_PUBLIC_DRAW_WS_URL` or set it as `ENV`. The `useWebSocket` hook's `WS_URL` constant would be `undefined` in production.
+
+**Fix:** Added `ARG NEXT_PUBLIC_DRAW_WS_URL` and `ENV NEXT_PUBLIC_DRAW_WS_URL=${NEXT_PUBLIC_DRAW_WS_URL}` to the builder stage.
+
+#### Bug 3: Prisma native binary missing from draw-ws runner
+`Dockerfile.draw-ws` (original) only copied `dist/index.js` to the runner. The esbuild command bundled `@prisma/client`'s JavaScript inline, but the Prisma native query engine binary (`.so.node`) was not copied. Prisma would fail at runtime when trying to load the binary.
+
+**Fix:**
+1. Added `--external:@prisma/client` to the esbuild command in `draw-ws/package.json`. This makes the bundle reference `require('@prisma/client')` at runtime instead of inlining it.
+2. Runner now copies `node_modules` from the deps stage (includes `@prisma/client` + the pnpm store with the native binary generated for Alpine Linux) and `packages/db` (which contains the Prisma generated client files).
+
+#### Bug 4: http-backend and ws-backend runtime failures
+These services used `tsc -b` to compile. The runner tried to use the compiled JS with workspace packages that couldn't be resolved at runtime:
+- `@repo/db` has `"main": "./src/index.ts"` — TypeScript, not executable in production Node.js
+- The runner's `COPY --from=builder /app/node_modules ./node_modules` copied pnpm symlinks that point to paths which don't exist in the minimal runner stage
+
+**Fix:** Switched both services to esbuild with `--external:@prisma/client`, same pattern as draw-ws. Runner copies `node_modules` + `packages/db` for Prisma runtime.
+
+---
+
+### 7.3 Three-Stage Dockerfile Pattern (all backends)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 1: deps (node:20-alpine)                                  │
+│   pnpm install --frozen-lockfile                                │
+│   pnpm db:generate  ← generates Prisma binary for linux-musl   │
+├─────────────────────────────────────────────────────────────────┤
+│ Stage 2: builder (FROM deps)                                    │
+│   pnpm --filter @repo/common build                              │
+│   pnpm --filter @repo/backend-common build                      │
+│   pnpm --filter <service> build  ← esbuild → dist/index.js     │
+├─────────────────────────────────────────────────────────────────┤
+│ Stage 3: runner (node:20-alpine, clean)                         │
+│   COPY node_modules from deps  ← pnpm store + Prisma binary    │
+│   COPY packages/db from deps   ← generated Prisma client       │
+│   COPY dist/index.js from builder                               │
+│   CMD ["node", "index.js"]                                      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why copy the entire `node_modules`?** pnpm uses a content-addressable virtual store (`.pnpm/`). The Prisma query engine native binary lives inside the store at a version-hashed path. Simple Docker COPY preserves symlinks, so all pnpm symlinks from `node_modules/@prisma/client` → `.pnpm/...` continue to work in the runner. Trying to copy only specific paths requires knowing exact version hashes at Dockerfile write time — impractical.
+
+**Image sizes:** The runner images are larger (~300-400MB each) than a minimal single-file approach, but this is correct and predictable. For a production system with many instances, the images could be slimmed down with `pnpm deploy`, but that requires additional Prisma schema configuration.
+
+---
+
+### 7.4 esbuild + `--external:@prisma/client`
+
+All three Node.js backends now use the same esbuild command pattern:
+```
+esbuild src/index.ts --bundle --platform=node --format=cjs --outfile=dist/index.js --external:@prisma/client
+```
+
+- `--bundle`: inline all imports (including workspace packages like `@repo/common`)
+- `--platform=node`: use Node.js built-ins, no browser shims
+- `--format=cjs`: CommonJS output (required for `require('@prisma/client')`)
+- `--external:@prisma/client`: leave `@prisma/client` as a runtime require (its native binary cannot be bundled)
+
+Workspace packages (`@repo/common`, `@repo/backend-common`, `@repo/db`) ARE bundled inline. They're found by esbuild via their `main` field in `package.json`. `@repo/db` uses `"main": "./src/index.ts"` which esbuild handles natively (it transpiles TypeScript). The `PrismaClient` import inside `@repo/db/src/index.ts` becomes a runtime `require('@prisma/client')` in the output.
+
+---
+
+### 7.5 Next.js Standalone Mode
+
+`next.config.js` now has `output: "standalone"`. When Next.js builds in standalone mode:
+- It generates `.next/standalone/` — a minimal copy of the app + required `node_modules` subset (no `pnpm install` needed in runner)
+- `server.js` is the entry point (runs the Next.js server without `next start`)
+- Static files (`.next/static/`, `public/`) must be copied separately
+
+```dockerfile
+COPY --from=builder /app/apps/web/.next/standalone ./
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/public ./apps/web/public
+
+CMD ["node", "apps/web/server.js"]
+```
+
+The runner also sets `ENV HOSTNAME=0.0.0.0` so the server binds to all interfaces (not just localhost).
+
+---
+
+### 7.6 DB Migration Service
+
+A dedicated `migrate` service in docker-compose runs `prisma migrate deploy` and exits. Other services depend on it:
+
+```yaml
+migrate:
+  build:
+    context: .
+    dockerfile: ./docker/Dockerfile.migrate
+  environment:
+    DATABASE_URL: postgresql://drawapp:...@db:5432/drawapp
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: "no"
+
+http-backend:
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+```
+
+`service_completed_successfully` is a Docker Compose condition that waits for the migrate container to exit with code 0. This guarantees the schema is applied before any service starts.
+
+The Dockerfile.migrate is intentionally minimal — it only installs `@repo/db` (which includes `prisma` CLI) and runs `pnpm db:deploy` (`prisma migrate deploy`).
+
+---
+
+### 7.7 Port Mapping Fix
+
+The PostgreSQL service was mapped as `5432:5432` (host:container). Changed to `5433:5432` to match the dev setup in `.env` (`DATABASE_URL` uses port 5433 on the host) and avoid conflicting with a local PostgreSQL installation.
+
+---
+
+### 7.8 Makefile Commands
+
+```bash
+make up        # docker compose up -d
+make down      # docker compose down
+make build     # docker compose build
+make rebuild   # docker compose build --no-cache
+make logs      # docker compose logs -f
+make migrate   # docker compose run --rm migrate
+make shell-db  # psql shell inside the db container
+make fresh     # wipe everything and start clean (down -v + up --build)
+```
+
+---
+
+### 7.9 How to Run in Production
+
+```bash
+# 1. Copy env template and fill in real values
+cp .env.example .env
+# Edit .env: set AUTH_SECRET, DATABASE_URL, NEXT_PUBLIC_* URLs
+
+# 2. Build and start everything
+make build
+make up
+
+# 3. Migrations run automatically (migrate service exits after success)
+# Check logs to confirm:
+make logs
+
+# 4. Access the app
+# Frontend:     http://localhost:3000
+# HTTP API:     http://localhost:3001
+# Draw WS:      ws://localhost:8081
+# Chat WS:      ws://localhost:8080
+# Postgres:     localhost:5433
+```
+
+---
+
+## All Phases Complete
+
+| Phase | Status | Description |
+|---|---|---|
+| 1 | ✅ | Code Review & Gap Analysis |
+| 2 | ✅ | DB & Auth (PostgreSQL, NextAuth v5, Prisma) |
+| 3 | ✅ | Drawing WebSocket Server (draw-ws, 14 events, esbuild) |
+| 4 | ✅ | Frontend Canvas (roughjs, perfect-freehand, 7 tools, undo/redo) |
+| 5 | ✅ | Real-Time Sync & E2EE (useWebSocket, AES-GCM-256, cursor overlay) |
+| 6 | ✅ | Polish (My Rooms, localStorage keys, copy-link, touch, leave) |
+| 7 | ✅ | Deployment (Docker Compose, esbuild all services, standalone Next.js) |

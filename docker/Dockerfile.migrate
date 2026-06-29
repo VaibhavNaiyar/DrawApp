@@ -1,0 +1,14 @@
+# One-shot container: runs `prisma migrate deploy` then exits.
+# Used by the `migrate` service in docker-compose.yml.
+FROM node:20-alpine
+RUN npm install -g pnpm
+WORKDIR /app
+
+# Only what's needed for prisma CLI: the db package + workspace config
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/db ./packages/db
+
+RUN pnpm install --frozen-lockfile --filter @repo/db
+
+WORKDIR /app/packages/db
+CMD ["pnpm", "db:deploy"]

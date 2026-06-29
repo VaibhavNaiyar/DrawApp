@@ -1,8 +1,6 @@
-FROM node:20-alpine AS base
+# ── Stage 1: install dependencies ────────────────────────────────────────────
+FROM node:20-alpine AS deps
 RUN npm install -g pnpm
-
-# ─── Install dependencies ─────────────────────────────────────────────────────
-FROM base AS deps
 WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
@@ -11,23 +9,26 @@ COPY apps/ws-backend/ ./apps/ws-backend/
 
 RUN pnpm install --frozen-lockfile
 
-# ─── Generate Prisma client ───────────────────────────────────────────────────
 WORKDIR /app/packages/db
 RUN pnpm db:generate
 
-# ─── Build ────────────────────────────────────────────────────────────────────
+# ── Stage 2: build ────────────────────────────────────────────────────────────
 FROM deps AS builder
-WORKDIR /app/apps/ws-backend
-RUN pnpm build
+WORKDIR /app
 
-# ─── Run ──────────────────────────────────────────────────────────────────────
+RUN pnpm --filter @repo/common build
+RUN pnpm --filter @repo/backend-common build
+RUN pnpm --filter ws-backend build
+
+# ── Stage 3: production image ─────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-COPY --from=builder /app/apps/ws-backend/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/db ./packages/db
+COPY --from=builder /app/apps/ws-backend/dist/index.js ./index.js
 
 EXPOSE 8080
-CMD ["node", "dist/index.js"]
+CMD ["node", "index.js"]

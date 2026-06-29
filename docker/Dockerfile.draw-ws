@@ -1,31 +1,42 @@
-FROM node:20-alpine AS base
+# ── Stage 1: install dependencies ────────────────────────────────────────────
+FROM node:20-alpine AS deps
 RUN npm install -g pnpm
-
-# ─── Install dependencies ─────────────────────────────────────────────────────
-FROM base AS deps
 WORKDIR /app
 
+# Workspace manifests first (maximise layer cache)
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
 COPY packages/ ./packages/
 COPY apps/draw-ws/ ./apps/draw-ws/
 
 RUN pnpm install --frozen-lockfile
 
-# ─── Generate Prisma client ───────────────────────────────────────────────────
+# Generate Prisma client for linux-musl (Alpine)
 WORKDIR /app/packages/db
 RUN pnpm db:generate
 
-# ─── Build (esbuild bundles everything into a single dist/index.js) ───────────
+# ── Stage 2: build ────────────────────────────────────────────────────────────
 FROM deps AS builder
-WORKDIR /app/apps/draw-ws
-RUN pnpm build
+WORKDIR /app
 
-# ─── Run ──────────────────────────────────────────────────────────────────────
+# Build workspace packages that draw-ws depends on
+RUN pnpm --filter @repo/common build
+RUN pnpm --filter @repo/backend-common build
+
+# Build draw-ws (esbuild; @prisma/client is external so binary stays in node_modules)
+RUN pnpm --filter draw-ws build
+
+# ── Stage 3: production image ─────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 
+# node_modules contains @prisma/client + the pnpm store with the native query-engine binary
+# packages/db contains the generated Prisma client files (.prisma/client)
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/db ./packages/db
+
+# The single esbuild bundle
 COPY --from=builder /app/apps/draw-ws/dist/index.js ./index.js
 
 EXPOSE 8081

@@ -1,6 +1,7 @@
 version: "3.9"
 
 services:
+  # ── Database ────────────────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -11,13 +12,26 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"   # host:container — 5433 avoids conflicts with local Postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U drawapp"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ── DB migrations (one-shot, exits after applying pending migrations) ────────
+  migrate:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.migrate
+    environment:
+      DATABASE_URL: postgresql://drawapp:${POSTGRES_PASSWORD:-drawapp_dev}@db:5432/drawapp
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # ── HTTP backend (REST API + auth) ───────────────────────────────────────────
   http-backend:
     build:
       context: .
@@ -28,11 +42,11 @@ services:
     environment:
       DATABASE_URL: postgresql://drawapp:${POSTGRES_PASSWORD:-drawapp_dev}@db:5432/drawapp
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
-  # ── Chat WebSocket (reference / learning backend) ──────────────────────────
+  # ── Chat WebSocket (reference / learning backend — never remove) ─────────────
   websocket:
     build:
       context: .
@@ -43,11 +57,11 @@ services:
     environment:
       DATABASE_URL: postgresql://drawapp:${POSTGRES_PASSWORD:-drawapp_dev}@db:5432/drawapp
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
-  # ── Drawing WebSocket (Phase 3 — the real-time canvas backend) ─────────────
+  # ── Drawing WebSocket (real-time canvas backend) ─────────────────────────────
   draw-ws:
     build:
       context: .
@@ -60,10 +74,11 @@ services:
       AUTH_SECRET: ${AUTH_SECRET}
       DRAW_WS_PORT: 8081
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
+  # ── Next.js frontend ─────────────────────────────────────────────────────────
   frontend:
     build:
       context: .
@@ -78,6 +93,9 @@ services:
     ports:
       - "3000:3000"
     env_file: .env
+    environment:
+      AUTH_SECRET: ${AUTH_SECRET}
+      DATABASE_URL: postgresql://drawapp:${POSTGRES_PASSWORD:-drawapp_dev}@db:5432/drawapp
     depends_on:
       - http-backend
       - draw-ws
