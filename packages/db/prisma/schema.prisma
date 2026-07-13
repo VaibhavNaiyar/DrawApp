@@ -23,6 +23,7 @@ model User {
 
 model Room {
   id        String   @id @default(cuid())
+  name      String   @default("Drawing")
   adminId   String
   admin     User     @relation(fields: [adminId], references: [id])
   shapes    Shape[]

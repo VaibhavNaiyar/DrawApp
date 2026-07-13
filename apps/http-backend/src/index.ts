@@ -90,10 +90,13 @@ app.post("/signin", async (req, res) => {
 
 app.post("/room", middleware, async (req, res) => {
   try {
+    // Count existing rooms to auto-generate "Drawing N"
+    const count = await prismaClient.room.count({ where: { adminId: req.userId! } });
+    const name = `Drawing ${count + 1}`;
     const room = await prismaClient.room.create({
-      data: { adminId: req.userId! },
+      data: { adminId: req.userId!, name },
     });
-    res.json({ roomId: room.id });
+    res.json({ roomId: room.id, name: room.name });
   } catch (e: any) {
     console.error("[create room error]", e);
     res.status(500).json({ message: "Internal server error" });

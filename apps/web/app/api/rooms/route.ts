@@ -18,7 +18,7 @@ export async function GET() {
     where: { adminId: session.user.id },
     orderBy: { updatedAt: "desc" },
     take: 10,
-    select: { id: true, createdAt: true, updatedAt: true },
+    select: { id: true, name: true, createdAt: true, updatedAt: true },
   });
 
   return NextResponse.json({ rooms });

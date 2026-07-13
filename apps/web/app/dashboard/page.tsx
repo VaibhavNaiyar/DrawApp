@@ -1,43 +1,79 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { signOut } from "next-auth/react";
+import { signOut, useSession } from "next-auth/react";
 import styles from "./dashboard.module.css";
 import ThemeToggle from "@/components/ui/ThemeToggle";
 
 interface Room {
   id: string;
+  name: string;
   createdAt: string;
   updatedAt: string;
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
 export default function DashboardPage() {
+  const { data: session } = useSession();
+  const userName = session?.user?.name ?? session?.user?.email ?? "there";
+
+  const [joinOpen, setJoinOpen] = useState(false);
   const [roomId, setRoomId] = useState("");
   const [joinError, setJoinError] = useState("");
   const [createError, setCreateError] = useState("");
   const [creating, setCreating] = useState(false);
   const [myRooms, setMyRooms] = useState<Room[]>([]);
+  const [roomsOpen, setRoomsOpen] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const joinInputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  // Load the user's rooms on mount
   useEffect(() => {
     fetch("/api/rooms")
       .then((r) => r.json())
       .then((data: { rooms: Room[] }) => setMyRooms(data.rooms ?? []))
-      .catch(() => { /* silent — rooms list is non-critical */ });
+      .catch(() => {});
   }, []);
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
+  useEffect(() => {
+    if (joinOpen) setTimeout(() => joinInputRef.current?.focus(), 50);
+  }, [joinOpen]);
+
+  useEffect(() => {
+    if (renamingId) setTimeout(() => renameInputRef.current?.focus(), 50);
+  }, [renamingId]);
+
+  function startRename(room: Room, e: React.MouseEvent) {
+    e.stopPropagation();
+    setRenamingId(room.id);
+    setRenameValue(room.name);
+  }
+
+  async function deleteRoom(id: string, name: string) {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    const res = await fetch(`/api/rooms/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setMyRooms((prev) => prev.filter((r) => r.id !== id));
+    }
+  }
+
+  async function submitRename(id: string) {
+    const name = renameValue.trim();
+    if (!name) { setRenamingId(null); return; }
+    const res = await fetch(`/api/rooms/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (res.ok) {
+      setMyRooms((prev) => prev.map((r) => (r.id === id ? { ...r, name } : r)));
+    }
+    setRenamingId(null);
+  }
+
+  async function handleCreate() {
     setCreateError("");
     setCreating(true);
     try {
@@ -63,10 +99,10 @@ export default function DashboardPage() {
     }
   }
 
-  function handleJoin(e: React.FormEvent) {
-    e.preventDefault();
+  function handleJoin(e?: React.FormEvent) {
+    e?.preventDefault();
     const id = roomId.trim();
-    if (!id) { setJoinError("Please enter a room ID"); return; }
+    if (!id) { setJoinError("Enter a room ID"); return; }
     router.push(`/room/${id}`);
   }
 
@@ -75,73 +111,206 @@ export default function DashboardPage() {
     router.push("/signin");
   }
 
+  function formatDate(iso: string) {
+    return new Date(iso).toLocaleDateString(undefined, {
+      month: "short", day: "numeric", year: "numeric",
+    });
+  }
+
   return (
-    <div className={styles.container}>
-      <header className={styles.header}>
-        <h1 className={styles.logo} onClick={() => router.push("/dashboard")} style={{ cursor: "pointer" }}>Draw<span>App</span></h1>
+    <div className={styles.splash}>
+      {/* Theme toggle — top right */}
+      <div className={styles.topRight}>
         <ThemeToggle variant="pill" />
-        <button className={styles.signout} onClick={handleSignout}>Sign Out</button>
-      </header>
+      </div>
 
-      <main className={styles.main}>
-        {/* ── Create / Join cards ─────────────────────────────────────────── */}
-        <div className={styles.grid}>
-          <div className={styles.card}>
-            <div className={styles.cardIcon}>+</div>
-            <h2 className={styles.cardTitle}>Create a Room</h2>
-            <p className={styles.cardSub}>Start a new collaborative space</p>
-            <form onSubmit={handleCreate} className={styles.form}>
-              {createError && <p className={styles.error}>{createError}</p>}
-              <button className={styles.button} type="submit" disabled={creating}>
-                {creating ? "Creating..." : "Create Room →"}
-              </button>
-            </form>
-          </div>
+      {/* Center panel */}
+      <div className={styles.panel}>
 
-          <div className={styles.card}>
-            <div className={styles.cardIcon}>#</div>
-            <h2 className={styles.cardTitle}>Join a Room</h2>
-            <p className={styles.cardSub}>Enter an existing room ID</p>
-            <form onSubmit={handleJoin} className={styles.form}>
-              <input
-                className={styles.input}
-                type="text"
-                placeholder="Paste room ID here"
-                value={roomId}
-                onChange={(e) => { setJoinError(""); setRoomId(e.target.value); }}
-              />
-              {joinError && <p className={styles.error}>{joinError}</p>}
-              <button className={`${styles.button} ${styles.buttonOutline}`} type="submit">
-                Join Room →
-              </button>
-            </form>
-          </div>
+        {/* Logo */}
+        <div className={styles.logoRow}>
+          <svg className={styles.logoIcon} viewBox="0 0 40 40" fill="none" aria-hidden>
+            <path d="M8 32 L6 34 L8 34 L8 32Z" fill="currentColor" />
+            <rect x="7" y="8" width="6" height="24" rx="2" transform="rotate(-30 20 20)" fill="currentColor" opacity="0.9"/>
+            <rect x="11" y="5" width="6" height="6" rx="1.5" transform="rotate(-30 20 20)" fill="currentColor" opacity="0.5"/>
+            <path d="M6 34 L10 30 L14 34Z" fill="currentColor" opacity="0.4"/>
+            <circle cx="28" cy="12" r="8" fill="currentColor" opacity="0.12"/>
+            <path d="M23 12 Q28 7 33 12 Q28 17 23 12Z" fill="currentColor" opacity="0.5"/>
+          </svg>
+          <h1 className={styles.logoText}>DRAW APP</h1>
         </div>
 
-        {/* ── My Rooms ────────────────────────────────────────────────────── */}
-        {myRooms.length > 0 && (
-          <section className={styles.myRooms}>
-            <h2 className={styles.sectionTitle}>My Rooms</h2>
-            <ul className={styles.roomList}>
-              {myRooms.map((room) => (
-                <li key={room.id} className={styles.roomItem}>
-                  <div className={styles.roomInfo}>
-                    <span className={styles.roomId}>{room.id.slice(0, 8)}…</span>
-                    <span className={styles.roomDate}>Created {formatDate(room.createdAt)}</span>
-                  </div>
-                  <button
-                    className={`${styles.button} ${styles.buttonSm}`}
-                    onClick={() => router.push(`/room/${room.id}`)}
-                    type="button"
-                  >
-                    Open →
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-      </main>
+        {/* Welcome */}
+        <p className={styles.welcome}>
+          Welcome, {userName}!<br />
+          You can draw whatever you want in here.
+        </p>
+
+        <div className={styles.divider} />
+
+        {/* Menu */}
+        <ul className={styles.menu}>
+
+          {/* Create Room */}
+          <li>
+            <button className={styles.menuItem} onClick={handleCreate} disabled={creating} type="button">
+              <span className={styles.menuIcon}>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <path d="M3 5a2 2 0 012-2h3.586a1 1 0 01.707.293L10.707 4.707A1 1 0 0011.414 5H15a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/>
+                  <path d="M10 8v4M8 10h4" strokeLinecap="round"/>
+                </svg>
+              </span>
+              <span className={styles.menuLabel}>
+                {creating ? "Creating…" : "Create Room"}
+              </span>
+            </button>
+            {createError && <p className={styles.menuError}>{createError}</p>}
+          </li>
+
+          {/* Join Room */}
+          <li>
+            <button
+              className={`${styles.menuItem} ${joinOpen ? styles.menuItemActive : ""}`}
+              onClick={() => { setJoinOpen((o) => !o); setJoinError(""); }}
+              type="button"
+            >
+              <span className={styles.menuIcon}>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <circle cx="8" cy="7" r="3"/>
+                  <path d="M2 17c0-3.314 2.686-5 6-5"/>
+                  <path d="M14 11v6M11 14h6" strokeLinecap="round"/>
+                </svg>
+              </span>
+              <span className={styles.menuLabel}>Join Room…</span>
+            </button>
+            {joinOpen && (
+              <form className={styles.joinForm} onSubmit={handleJoin}>
+                <input
+                  ref={joinInputRef}
+                  className={styles.joinInput}
+                  type="text"
+                  placeholder="Paste room ID here"
+                  value={roomId}
+                  onChange={(e) => { setJoinError(""); setRoomId(e.target.value); }}
+                />
+                <button className={styles.joinBtn} type="submit">Join →</button>
+                {joinError && <p className={styles.menuError}>{joinError}</p>}
+              </form>
+            )}
+          </li>
+
+          {/* My Rooms */}
+          <li>
+              <button
+                className={`${styles.menuItem} ${roomsOpen ? styles.menuItemActive : ""}`}
+                onClick={() => setRoomsOpen((o) => !o)}
+                type="button"
+              >
+                <span className={styles.menuIcon}>
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <rect x="2" y="4" width="16" height="13" rx="2"/>
+                    <path d="M2 8h16" strokeLinecap="round"/>
+                    <path d="M6 4V3M14 4V3" strokeLinecap="round"/>
+                  </svg>
+                </span>
+                <span className={styles.menuLabel}>My Rooms</span>
+                {myRooms.length > 0 && <span className={styles.menuShortcut}>{myRooms.length}</span>}
+              </button>
+              {roomsOpen && (
+                <ul className={styles.roomList}>
+                  {myRooms.map((room) => (
+                    <li key={room.id}>
+                      {renamingId === room.id ? (
+                        <form
+                          className={styles.renameForm}
+                          onSubmit={(e) => { e.preventDefault(); void submitRename(room.id); }}
+                        >
+                          <input
+                            ref={renameInputRef}
+                            className={styles.renameInput}
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onBlur={() => void submitRename(room.id)}
+                            onKeyDown={(e) => { if (e.key === "Escape") setRenamingId(null); }}
+                          />
+                          <button className={styles.renameBtn} type="submit">Save</button>
+                        </form>
+                      ) : (
+                        <div className={styles.roomItem}>
+                          <button
+                            className={styles.roomOpen}
+                            onClick={() => router.push(`/room/${room.id}`)}
+                            type="button"
+                          >
+                            <span className={styles.roomName}>{room.name || `Drawing`}</span>
+                            <span className={styles.roomDate}>{formatDate(room.createdAt)}</span>
+                          </button>
+                          <button
+                            className={styles.renameIcon}
+                            onClick={(e) => startRename(room, e)}
+                            type="button"
+                            title="Rename"
+                          >
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z" strokeLinejoin="round"/>
+                            </svg>
+                          </button>
+                          <button
+                            className={styles.deleteIcon}
+                            onClick={(e) => { e.stopPropagation(); void deleteRoom(room.id, room.name); }}
+                            type="button"
+                            title="Delete"
+                          >
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <path d="M3 4h10M6 4V3h4v1M5 4l.5 9h5L11 4" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                  {myRooms.length === 0 && (
+                    <li className={styles.emptyRooms}>No rooms yet — create one above</li>
+                  )}
+                </ul>
+              )}
+            </li>
+
+          {/* Help */}
+          <li>
+            <button
+              className={styles.menuItem}
+              onClick={() => alert("Keyboard shortcuts:\nP — Pencil\nR — Rectangle\nE — Ellipse\nL — Line\nA — Arrow\nT — Text\nD — Diamond\nS — Select\nCtrl+Z — Undo\nCtrl+Y — Redo\nDelete — Remove selected")}
+              type="button"
+            >
+              <span className={styles.menuIcon}>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <circle cx="10" cy="10" r="8"/>
+                  <path d="M10 14v-1" strokeLinecap="round"/>
+                  <path d="M10 11c0-1 .8-1.5 1.5-2.2C12.2 8 12.5 7.2 12 6.5 11.5 5.7 10.8 5.5 10 5.5c-1 0-1.8.6-2 1.5" strokeLinecap="round"/>
+                </svg>
+              </span>
+              <span className={styles.menuLabel}>Help</span>
+              <span className={styles.menuShortcut}>?</span>
+            </button>
+          </li>
+
+          {/* Sign Out */}
+          <li>
+            <button className={styles.menuItem} onClick={handleSignout} type="button">
+              <span className={styles.menuIcon}>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <path d="M13 3h2a2 2 0 012 2v10a2 2 0 01-2 2h-2" strokeLinecap="round"/>
+                  <path d="M9 13l4-3-4-3" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M13 10H3" strokeLinecap="round"/>
+                </svg>
+              </span>
+              <span className={styles.menuLabel}>Sign Out</span>
+            </button>
+          </li>
+
+        </ul>
+      </div>
     </div>
   );
 }
