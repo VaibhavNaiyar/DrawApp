@@ -77,7 +77,7 @@ export default function DashboardPage() {
   return (
     <div className={styles.container}>
       <header className={styles.header}>
-        <h1 className={styles.logo}>Draw<span>App</span></h1>
+        <h1 className={styles.logo} onClick={() => router.push("/dashboard")} style={{ cursor: "pointer" }}>Draw<span>App</span></h1>
         <button className={styles.signout} onClick={handleSignout}>Sign Out</button>
       </header>
 

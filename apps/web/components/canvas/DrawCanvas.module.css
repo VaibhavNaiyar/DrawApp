@@ -102,3 +102,24 @@
   box-shadow: 0 0 6px #f59e0b88;
   flex-shrink: 0;
 }
+
+/* Text tool — inline editor overlay */
+.textEditor {
+  position: absolute;
+  z-index: 20;
+  min-width: 120px;
+  max-width: 600px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  outline: 1px dashed rgba(124, 58, 237, 0.6);
+  outline-offset: 3px;
+  border-radius: 2px;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+  font-family: Inter, system-ui, sans-serif;
+  white-space: pre;
+  caret-color: #a78bfa;
+}

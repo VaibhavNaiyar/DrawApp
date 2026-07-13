@@ -7,7 +7,8 @@ export type Tool =
   | "ellipse"
   | "line"
   | "arrow"
-  | "eraser";
+  | "eraser"
+  | "text";
 
 // ─── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -57,12 +58,21 @@ export type ArrowShape = ShapeBase & {
   y2: number;
 };
 
+export type TextShape = ShapeBase & {
+  type: "text";
+  x: number;
+  y: number;
+  text: string;
+  fontSize: number;
+};
+
 export type DrawingShape =
   | PencilShape
   | RectShape
   | EllipseShape
   | LineShape
-  | ArrowShape;
+  | ArrowShape
+  | TextShape;
 
 // ─── Toolbar state ────────────────────────────────────────────────────────────
 
@@ -70,6 +80,7 @@ export interface CanvasSettings {
   strokeColor: string;
   fillColor: string; // "transparent" = no fill
   strokeWidth: number;
+  fontSize: number;  // used by text tool
 }
 
 // ─── Select-tool drag state (held in a ref, not React state) ──────────────────

@@ -70,6 +70,17 @@ const TOOLS: { id: Tool; tip: string; icon: React.ReactNode }[] = [
       </svg>
     ),
   },
+  {
+    id: "text",
+    tip: "Text  [T]",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 7V4h16v3" />
+        <path d="M9 20h6" />
+        <path d="M12 4v16" />
+      </svg>
+    ),
+  },
 ];
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -166,6 +177,26 @@ export default function Toolbar({
       </div>
 
       <div className={styles.divider} />
+
+      {/* Font size — only when text tool is active */}
+      {activeTool === "text" && (
+        <div className={styles.colorSection}>
+          <span className={styles.colorLabel}>size</span>
+          <div className={styles.fontSizeBtns}>
+            {([14, 20, 28, 40] as const).map((size) => (
+              <button
+                key={size}
+                type="button"
+                className={`${styles.fontSizeBtn} ${settings.fontSize === size ? styles.active : ""}`}
+                onClick={() => onSettingsChange({ fontSize: size })}
+                title={`${size}px`}
+              >
+                {size === 14 ? "S" : size === 20 ? "M" : size === 28 ? "L" : "XL"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stroke width */}
       <div className={styles.widthSection}>

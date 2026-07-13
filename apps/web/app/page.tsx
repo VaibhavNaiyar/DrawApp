@@ -1,10 +1,9 @@
-import { cookies } from "next/headers";
+import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 
-// Server component — reads cookie instantly, no JS waterfall
+// Server component — checks NextAuth session, redirects accordingly
 export default async function HomePage() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get("token")?.value;
-  if (token) redirect("/dashboard");
+  const session = await auth();
+  if (session?.user) redirect("/dashboard");
   else redirect("/signin");
 }

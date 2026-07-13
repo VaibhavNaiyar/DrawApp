@@ -13,6 +13,7 @@ import type {
   EllipseShape,
   LineShape,
   ArrowShape,
+  TextShape,
   RemoteCursor,
 } from "./types";
 import { createRoughCanvas, renderCanvas } from "./renderer";
@@ -51,6 +52,8 @@ function translateShape(shape: DrawingShape, dx: number, dy: number): DrawingSha
     case "line":
     case "arrow":
       return { ...shape, x1: shape.x1 + dx, y1: shape.y1 + dy, x2: shape.x2 + dx, y2: shape.y2 + dy };
+    case "text":
+      return { ...shape, x: shape.x + dx, y: shape.y + dy };
   }
 }
 
@@ -65,6 +68,7 @@ function isSignificantShape(shape: DrawingShape): boolean {
     case "ellipse":  return shape.rx > 2 && shape.ry > 2;
     case "line":
     case "arrow":    return Math.hypot(shape.x2 - shape.x1, shape.y2 - shape.y1) > 4;
+    case "text":     return shape.text.trim().length > 0;
   }
 }
 
@@ -95,6 +99,9 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   const currentShapeRef = useRef<DrawingShape | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
 
+  // ── Text tool ──────────────────────────────────────────────────────────────
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
   // ── E2EE ───────────────────────────────────────────────────────────────────
   const cryptoKeyRef = useRef<CryptoKey | null>(null);
 
@@ -104,7 +111,9 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     strokeColor: "#e2e8f0",
     fillColor: "transparent",
     strokeWidth: 2,
+    fontSize: 20,
   });
+  const [textEditing, setTextEditing] = useState<{ id: string; x: number; y: number } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transientAll, setTransientAll] = useState<DrawingShape[] | null>(null);
   const [remoteShapes, setRemoteShapes] = useState<DrawingShape[]>([]);
@@ -247,10 +256,37 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     strokeWidth: settings.strokeWidth,
   });
 
+  // ── Text commit ────────────────────────────────────────────────────────────
+  const commitText = useCallback((value: string, editing: { id: string; x: number; y: number } | null) => {
+    if (!editing) return;
+    const text = value.trim();
+    if (text) {
+      const shape: TextShape = {
+        id: editing.id,
+        type: "text",
+        x: editing.x,
+        y: editing.y,
+        text,
+        fontSize: settings.fontSize,
+        strokeColor: settings.strokeColor,
+        strokeWidth: settings.strokeWidth,
+      };
+      commit([...shapes, shape]);
+      void sendDraw(shape);
+    }
+    setTextEditing(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings, shapes, commit, sendDraw]);
+
   // ── Core pointer handlers (shared by mouse and touch) ──────────────────────
 
   const pointerDown = useCallback((x: number, y: number) => {
     startPosRef.current = { x, y };
+
+    if (activeTool === "text") {
+      setTextEditing({ id: makeId(), x, y });
+      return;
+    }
 
     if (activeTool === "select") {
       const allShapes = [...shapes, ...remoteShapes];
@@ -467,7 +503,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
       const toolMap: Record<string, Tool> = {
         s: "select", p: "pencil", r: "rect",
-        e: "ellipse", l: "line", a: "arrow", x: "eraser",
+        e: "ellipse", l: "line", a: "arrow", x: "eraser", t: "text",
       };
       const tool = toolMap[e.key.toLowerCase()];
       if (tool) setActiveTool(tool);
@@ -494,6 +530,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   const cursorMap: Record<Tool, string> = {
     select: "default", pencil: "crosshair", rect: "crosshair",
     ellipse: "crosshair", line: "crosshair", arrow: "crosshair", eraser: "cell",
+    text: "text",
   };
 
   // ── Online count ───────────────────────────────────────────────────────────
@@ -546,6 +583,33 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
       {/* Remote cursor overlay */}
       <CursorOverlay cursors={cursors} myConnectionId={connectionId} />
+
+      {/* Text tool inline editor */}
+      {textEditing && (
+        <textarea
+          ref={textareaRef}
+          autoFocus
+          className={styles.textEditor}
+          style={{
+            left: textEditing.x,
+            top: textEditing.y,
+            fontSize: settings.fontSize,
+            color: settings.strokeColor,
+          }}
+          rows={1}
+          onInput={(e) => {
+            const ta = e.currentTarget;
+            ta.style.height = "auto";
+            ta.style.height = `${ta.scrollHeight}px`;
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              commitText(e.currentTarget.value, textEditing);
+            }
+          }}
+          onBlur={(e) => commitText(e.currentTarget.value, textEditing)}
+        />
+      )}
 
       <canvas
         ref={canvasRef}

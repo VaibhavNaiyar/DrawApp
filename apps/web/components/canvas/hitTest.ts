@@ -48,6 +48,18 @@ export function getBBox(shape: DrawingShape): BBox {
       }
       return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
     }
+
+    case "text": {
+      const lines = shape.text.split("\n");
+      const maxLen = Math.max(...lines.map((l) => l.length), 1);
+      // Approximate: ~0.55 × fontSize per character, 1.4 line-height
+      return {
+        x: shape.x,
+        y: shape.y,
+        w: maxLen * shape.fontSize * 0.55,
+        h: lines.length * shape.fontSize * 1.4,
+      };
+    }
   }
 }
 
@@ -83,6 +95,11 @@ function isHit(shape: DrawingShape, px: number, py: number): boolean {
       return distToSegment(px, py, shape.x1, shape.y1, shape.x2, shape.y2) <= EDGE_TOLERANCE + shape.strokeWidth;
     case "pencil":
       return isHitPencil(shape, px, py);
+    case "text": {
+      const b = getBBox(shape);
+      return px >= b.x - EDGE_TOLERANCE && px <= b.x + b.w + EDGE_TOLERANCE &&
+             py >= b.y - EDGE_TOLERANCE && py <= b.y + b.h + EDGE_TOLERANCE;
+    }
   }
 }
 

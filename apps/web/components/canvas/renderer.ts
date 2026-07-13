@@ -13,6 +13,7 @@ const SELECTION_COLOR = "#7c3aed";
 const ROUGHNESS = 1.2;
 const ARROW_HEAD_LEN = 14;
 const ARROW_HEAD_ANGLE = 0.42; // ~24 degrees in radians
+const TEXT_LINE_HEIGHT = 1.4; // multiplier of fontSize
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ function renderShape(
         stroke: shape.strokeColor,
         strokeWidth: shape.strokeWidth,
         fill: shape.fillColor === "transparent" ? undefined : shape.fillColor,
-        fillStyle: "hachure",
+        fillStyle: "solid",
         roughness: ROUGHNESS,
       });
       break;
@@ -69,7 +70,7 @@ function renderShape(
         stroke: shape.strokeColor,
         strokeWidth: shape.strokeWidth,
         fill: shape.fillColor === "transparent" ? undefined : shape.fillColor,
-        fillStyle: "hachure",
+        fillStyle: "solid",
         roughness: ROUGHNESS,
       });
       break;
@@ -88,6 +89,10 @@ function renderShape(
 
     case "pencil":
       renderPencil(ctx, shape);
+      break;
+
+    case "text":
+      renderText(ctx, shape);
       break;
   }
 }
@@ -177,6 +182,22 @@ function strokeToSvgPath(stroke: number[][]): string {
 
   parts.push("Z");
   return parts.join(" ");
+}
+
+function renderText(
+  ctx: CanvasRenderingContext2D,
+  shape: { x: number; y: number; text: string; fontSize: number; strokeColor: string }
+): void {
+  ctx.save();
+  ctx.font = `${shape.fontSize}px Inter, system-ui, sans-serif`;
+  ctx.fillStyle = shape.strokeColor;
+  ctx.textBaseline = "top";
+  const lines = shape.text.split("\n");
+  const lineHeight = shape.fontSize * TEXT_LINE_HEIGHT;
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i] ?? "", shape.x, shape.y + i * lineHeight);
+  }
+  ctx.restore();
 }
 
 // ─── Selection box ────────────────────────────────────────────────────────────
