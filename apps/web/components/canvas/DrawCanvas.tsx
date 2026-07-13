@@ -36,6 +36,7 @@ import {
 import CursorOverlay from "./CursorOverlay";
 import Toolbar from "./Toolbar";
 import ThemeToggle from "@/components/ui/ThemeToggle";
+import ZoomControls from "@/components/ui/ZoomControls";
 import { useTheme } from "@/components/ThemeProvider";
 import styles from "./DrawCanvas.module.css";
 
@@ -158,6 +159,12 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     startPanX: number;  startPanY: number;
   } | null>(null);
 
+  // ── Viewport zoom ───────────────────────────────────────────────────────────
+  const ZOOM_MIN = 0.1;
+  const ZOOM_MAX = 5;
+  const zoomRef = useRef(1);
+  const [zoomState, setZoomState] = useState(1);
+
   // ── Text tool ──────────────────────────────────────────────────────────────
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -191,9 +198,21 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   const [remoteStreams, setRemoteStreams] = useState<Map<string, DrawingShape>>(new Map());
   const [cursors, setCursors] = useState<Map<string, RemoteCursor>>(new Map());
   const [copied, setCopied] = useState(false);
+  const [roomName, setRoomName] = useState<string | null>(null);
 
   // ── History ────────────────────────────────────────────────────────────────
   const { shapes, commit, undo, redo, clear, remapColors, canUndo, canRedo } = useDrawHistory();
+
+  // ── Fetch room name ────────────────────────────────────────────────────────
+  useEffect(() => {
+    fetch("/api/rooms")
+      .then((r) => r.json())
+      .then((data: { rooms: { id: string; name: string }[] }) => {
+        const match = data.rooms?.find((r) => r.id === roomId);
+        if (match?.name) setRoomName(match.name);
+      })
+      .catch(() => {});
+  }, [roomId]);
 
   // ── Theme ref (used inside useCallback without stale closure) ────────────
   const themeRef = useRef(theme);
@@ -278,7 +297,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       if (!rc || !ctx) return;
       const base = transientAll ?? [...shapes, ...remoteShapes];
       const bg = themeRef.current === "dark" ? DARK_CANVAS_BG : LIGHT_CANVAS_BG;
-      renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId, panRef.current, bg);
+      renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId, panRef.current, bg, zoomRef.current);
     }
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
@@ -303,8 +322,8 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     if (!ctx) return;
     const base = transientAll ?? [...shapes, ...remoteShapes];
     const bg = theme === "dark" ? DARK_CANVAS_BG : LIGHT_CANVAS_BG;
-    renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId, panState, bg);
-  }, [shapes, transientAll, remoteShapes, remoteStreams, selectedId, panState, theme]);
+    renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId, panState, bg, zoomState);
+  }, [shapes, transientAll, remoteShapes, remoteStreams, selectedId, panState, theme, zoomState]);
 
   // ── Imperative draw (bypasses React for 60fps local preview) ──────────────
   const drawImmediate = useCallback((localWithPreview: DrawingShape[]) => {
@@ -323,7 +342,8 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       rc,
       null,
       panRef.current,
-      bg
+      bg,
+      zoomRef.current
     );
   }, []);
 
@@ -368,9 +388,9 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   // ── Core pointer handlers (shared by mouse and touch) ──────────────────────
 
   const pointerDown = useCallback((screenX: number, screenY: number) => {
-    // Convert screen → world (accounts for pan offset)
-    const x = screenX - panRef.current.x;
-    const y = screenY - panRef.current.y;
+    // Convert screen → world (accounts for pan and zoom)
+    const x = (screenX - panRef.current.x) / zoomRef.current;
+    const y = (screenY - panRef.current.y) / zoomRef.current;
     startPosRef.current = { x, y };
 
     if (activeTool === "text") {
@@ -462,8 +482,8 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
   const pointerMove = useCallback((screenX: number, screenY: number) => {
     // Convert screen → world
-    const x = screenX - panRef.current.x;
-    const y = screenY - panRef.current.y;
+    const x = (screenX - panRef.current.x) / zoomRef.current;
+    const y = (screenY - panRef.current.y) / zoomRef.current;
     sendCursorMove(x, y);
 
     if (activeTool === "select") {
@@ -577,8 +597,8 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
   const pointerUp = useCallback((screenX: number, screenY: number) => {
     // Convert screen → world
-    const x = screenX - panRef.current.x;
-    const y = screenY - panRef.current.y;
+    const x = (screenX - panRef.current.x) / zoomRef.current;
+    const y = (screenY - panRef.current.y) / zoomRef.current;
 
     // ── Pan commit ─────────────────────────────────────────────────────────────
     if (activeTool === "select" && panDragRef.current) {
@@ -688,6 +708,42 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     pointerUp(x, y);
   };
 
+  // ── Zoom helpers ───────────────────────────────────────────────────────────
+  const zoomAtPoint = useCallback((sx: number, sy: number, factor: number) => {
+    const oldZoom = zoomRef.current;
+    const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, oldZoom * factor));
+    if (newZoom === oldZoom) return;
+    // Keep the world point under (sx, sy) fixed
+    const wx = (sx - panRef.current.x) / oldZoom;
+    const wy = (sy - panRef.current.y) / oldZoom;
+    panRef.current = { x: sx - wx * newZoom, y: sy - wy * newZoom };
+    zoomRef.current = newZoom;
+    setZoomState(newZoom);
+    setPanState({ ...panRef.current });
+  }, []);
+
+  // ── Wheel: Ctrl+scroll = zoom, plain scroll = pan ─────────────────────────
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const rect = canvas!.getBoundingClientRect();
+        const factor = e.deltaY < 0 ? 1.1 : 0.9;
+        zoomAtPoint(e.clientX - rect.left, e.clientY - rect.top, factor);
+      } else {
+        panRef.current = {
+          x: panRef.current.x - e.deltaX,
+          y: panRef.current.y - e.deltaY,
+        };
+        setPanState({ ...panRef.current });
+      }
+    }
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, [zoomAtPoint]);
+
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -698,6 +754,24 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
         if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
         if (e.key === "z" && e.shiftKey)  { e.preventDefault(); redo(); return; }
         if (e.key === "y")                { e.preventDefault(); redo(); return; }
+        if (e.key === "=" || e.key === "+") {
+          e.preventDefault();
+          const canvas = canvasRef.current;
+          if (canvas) zoomAtPoint(canvas.width / 2, canvas.height / 2, 1.1);
+          return;
+        }
+        if (e.key === "-") {
+          e.preventDefault();
+          const canvas = canvasRef.current;
+          if (canvas) zoomAtPoint(canvas.width / 2, canvas.height / 2, 0.9);
+          return;
+        }
+        if (e.key === "0") {
+          e.preventDefault();
+          zoomRef.current = 1;
+          setZoomState(1);
+          return;
+        }
       }
 
       if ((e.key === "Delete" || e.key === "Backspace") && selectedId) {
@@ -721,7 +795,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [shapes, remoteShapes, selectedId, undo, redo, commit, sendEraser]);
+  }, [shapes, remoteShapes, selectedId, undo, redo, commit, sendEraser, zoomAtPoint]);
 
   // ── Focus textarea when text editing starts ────────────────────────────────
   useEffect(() => {
@@ -778,7 +852,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
           ← back
         </button>
         <span>|</span>
-        <span>Room <strong>{roomId.slice(0, 8)}…</strong></span>
+        <span><strong>{roomName ?? `${roomId.slice(0, 8)}…`}</strong></span>
 
         {/* Participant count */}
         {onlineCount > 0 && (
@@ -804,6 +878,16 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
         <ThemeToggle variant="icon" />
       </div>
 
+      {/* Zoom controls — bottom left */}
+      <div className={styles.zoomBar}>
+        <ZoomControls
+          zoom={zoomState}
+          onZoomOut={() => { const c = canvasRef.current; if (c) zoomAtPoint(c.width / 2, c.height / 2, 0.9); }}
+          onZoomIn={() => { const c = canvasRef.current; if (c) zoomAtPoint(c.width / 2, c.height / 2, 1.1); }}
+          onReset={() => { zoomRef.current = 1; setZoomState(1); }}
+        />
+      </div>
+
       {/* Remote cursor overlay */}
       <CursorOverlay cursors={cursors} myConnectionId={connectionId} />
 
@@ -826,10 +910,10 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
           ref={textareaRef}
           className={styles.textEditor}
           style={{
-            // textEditing stores world coords; add pan to get screen position
-            left: textEditing.x + panState.x,
-            top: textEditing.y + panState.y,
-            fontSize: settings.fontSize,
+            // textEditing stores world coords; apply zoom+pan to get screen position
+            left: textEditing.x * zoomState + panState.x,
+            top: textEditing.y * zoomState + panState.y,
+            fontSize: settings.fontSize * zoomState,
             color: settings.strokeColor,
           }}
           rows={1}

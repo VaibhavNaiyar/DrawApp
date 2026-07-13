@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import styles from "./dashboard.module.css";
 import ThemeToggle from "@/components/ui/ThemeToggle";
+import ZoomControls from "@/components/ui/ZoomControls";
 
 interface Room {
   id: string;
@@ -26,6 +27,11 @@ export default function DashboardPage() {
   const [roomsOpen, setRoomsOpen] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 2;
+  const ZOOM_STEP = 0.1;
   const joinInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
@@ -51,12 +57,12 @@ export default function DashboardPage() {
     setRenameValue(room.name);
   }
 
-  async function deleteRoom(id: string, name: string) {
-    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  async function deleteRoom(id: string) {
     const res = await fetch(`/api/rooms/${id}`, { method: "DELETE" });
     if (res.ok) {
       setMyRooms((prev) => prev.filter((r) => r.id !== id));
     }
+    setConfirmDeleteId(null);
   }
 
   async function submitRename(id: string) {
@@ -117,6 +123,18 @@ export default function DashboardPage() {
     });
   }
 
+  // Ctrl+scroll to zoom on the splash
+  useEffect(() => {
+    function onWheel(e: WheelEvent) {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+      setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, parseFloat((z + delta).toFixed(2)))));
+    }
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, []);
+
   return (
     <div className={styles.splash}>
       {/* Theme toggle — top right */}
@@ -124,8 +142,18 @@ export default function DashboardPage() {
         <ThemeToggle variant="pill" />
       </div>
 
+      {/* Zoom controls — bottom left */}
+      <div className={styles.zoomBar}>
+        <ZoomControls
+          zoom={zoom}
+          onZoomOut={() => setZoom((z) => Math.max(ZOOM_MIN, parseFloat((z - ZOOM_STEP).toFixed(2))))}
+          onZoomIn={() => setZoom((z) => Math.min(ZOOM_MAX, parseFloat((z + ZOOM_STEP).toFixed(2))))}
+          onReset={() => setZoom(1)}
+        />
+      </div>
+
       {/* Center panel */}
-      <div className={styles.panel}>
+      <div className={styles.panel} style={{ transform: `scale(${zoom})`, transformOrigin: "center center" }}>
 
         {/* Logo */}
         <div className={styles.logoRow}>
@@ -255,16 +283,24 @@ export default function DashboardPage() {
                               <path d="M11.5 2.5l2 2L5 13H3v-2L11.5 2.5z" strokeLinejoin="round"/>
                             </svg>
                           </button>
-                          <button
-                            className={styles.deleteIcon}
-                            onClick={(e) => { e.stopPropagation(); void deleteRoom(room.id, room.name); }}
-                            type="button"
-                            title="Delete"
-                          >
-                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                              <path d="M3 4h10M6 4V3h4v1M5 4l.5 9h5L11 4" strokeLinecap="round" strokeLinejoin="round"/>
-                            </svg>
-                          </button>
+                          {confirmDeleteId === room.id ? (
+                            <span className={styles.confirmDelete}>
+                              <span className={styles.confirmText}>Delete?</span>
+                              <button className={styles.confirmYes} onClick={() => void deleteRoom(room.id)} type="button">Yes</button>
+                              <button className={styles.confirmNo} onClick={() => setConfirmDeleteId(null)} type="button">No</button>
+                            </span>
+                          ) : (
+                            <button
+                              className={styles.deleteIcon}
+                              onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(room.id); }}
+                              type="button"
+                              title="Delete"
+                            >
+                              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                <path d="M3 4h10M6 4V3h4v1M5 4l.5 9h5L11 4" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            </button>
+                          )}
                         </div>
                       )}
                     </li>
@@ -280,7 +316,7 @@ export default function DashboardPage() {
           <li>
             <button
               className={styles.menuItem}
-              onClick={() => alert("Keyboard shortcuts:\nP — Pencil\nR — Rectangle\nE — Ellipse\nL — Line\nA — Arrow\nT — Text\nD — Diamond\nS — Select\nCtrl+Z — Undo\nCtrl+Y — Redo\nDelete — Remove selected")}
+              onClick={() => router.push("/help")}
               type="button"
             >
               <span className={styles.menuIcon}>
@@ -292,6 +328,24 @@ export default function DashboardPage() {
               </span>
               <span className={styles.menuLabel}>Help</span>
               <span className={styles.menuShortcut}>?</span>
+            </button>
+          </li>
+
+          {/* About */}
+          <li>
+            <button
+              className={styles.menuItem}
+              onClick={() => router.push("/about")}
+              type="button"
+            >
+              <span className={styles.menuIcon}>
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <circle cx="10" cy="10" r="8"/>
+                  <path d="M10 9v5" strokeLinecap="round"/>
+                  <circle cx="10" cy="6.5" r="0.75" fill="currentColor" stroke="none"/>
+                </svg>
+              </span>
+              <span className={styles.menuLabel}>About</span>
             </button>
           </li>
 

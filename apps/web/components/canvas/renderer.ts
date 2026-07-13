@@ -32,7 +32,8 @@ export function renderCanvas(
   rc: RoughCanvas,
   selectedId: string | null,
   pan: { x: number; y: number } = { x: 0, y: 0 },
-  canvasBg?: string
+  canvasBg?: string,
+  zoom = 1
 ): void {
   const { width, height } = ctx.canvas;
   ctx.clearRect(0, 0, width, height);
@@ -40,9 +41,10 @@ export function renderCanvas(
   ctx.fillStyle = canvasBg ?? CANVAS_BG;
   ctx.fillRect(0, 0, width, height);
 
-  // Apply viewport pan so shapes are in world space
+  // Apply viewport transform: pan (screen-space) then scale
   ctx.save();
   ctx.translate(pan.x, pan.y);
+  ctx.scale(zoom, zoom);
 
   for (const shape of shapes) {
     renderShape(ctx, rc, shape);

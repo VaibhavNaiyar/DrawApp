@@ -16,6 +16,13 @@
   z-index: 20;
 }
 
+.zoomBar {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 20;
+}
+
 /* ── Center panel (no card bg — floats on the canvas like Excalidraw) ──────── */
 .panel {
   display: flex;
@@ -349,6 +356,49 @@
 .renameBtn:hover {
   background: var(--accent-bright, #6d28d9);
 }
+
+.confirmDelete {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+.confirmText {
+  font-size: 12px;
+  color: #ef4444;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.confirmYes {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.confirmYes:hover { background: #dc2626; }
+
+.confirmNo {
+  background: transparent;
+  color: var(--text-1, #94a3b8);
+  border: 1px solid var(--border, rgba(100,100,120,0.2));
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.confirmNo:hover { background: var(--toolbar-hover-bg); }
 
 .emptyRooms {
   padding: 8px 12px;
