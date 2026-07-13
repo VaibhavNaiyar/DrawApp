@@ -93,6 +93,22 @@ export interface DragState {
   snapshot: DrawingShape;
 }
 
+// ─── Resize handle identifiers ────────────────────────────────────────────────
+
+/** 8 corner/edge handles for closed shapes; "start"/"end" for line and arrow */
+export type ResizeHandle =
+  | "nw" | "n" | "ne"
+  | "e"  |        "w"
+  | "sw" | "s" | "se"
+  | "start" | "end";
+
+export interface ResizeState {
+  shapeId: string;
+  handle: ResizeHandle;
+  /** Snapshot of the shape at the moment the handle was grabbed */
+  snapshot: DrawingShape;
+}
+
 // ─── Remote cursor presence ────────────────────────────────────────────────────
 
 export interface RemoteCursor {

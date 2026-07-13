@@ -8,6 +8,8 @@ import type {
   CanvasSettings,
   DrawingShape,
   DragState,
+  ResizeState,
+  ResizeHandle,
   PencilShape,
   RectShape,
   EllipseShape,
@@ -17,7 +19,8 @@ import type {
   RemoteCursor,
 } from "./types";
 import { createRoughCanvas, renderCanvas } from "./renderer";
-import { hitTest } from "./hitTest";
+import { hitTest, hitTestHandle } from "./hitTest";
+import { translateShape, resizeShape } from "./shapeTransforms";
 import { useDrawHistory } from "./useDrawHistory";
 import { useWebSocket, type WsHandlers } from "./useWebSocket";
 import {
@@ -41,21 +44,12 @@ function makeId(): string {
     : `${Date.now()}-${Math.random()}`;
 }
 
-function translateShape(shape: DrawingShape, dx: number, dy: number): DrawingShape {
-  switch (shape.type) {
-    case "pencil":
-      return { ...shape, points: shape.points.map(([x, y]) => [x + dx, y + dy]) };
-    case "rect":
-      return { ...shape, x: shape.x + dx, y: shape.y + dy };
-    case "ellipse":
-      return { ...shape, cx: shape.cx + dx, cy: shape.cy + dy };
-    case "line":
-    case "arrow":
-      return { ...shape, x1: shape.x1 + dx, y1: shape.y1 + dy, x2: shape.x2 + dx, y2: shape.y2 + dy };
-    case "text":
-      return { ...shape, x: shape.x + dx, y: shape.y + dy };
-  }
-}
+const handleCursorMap: Record<ResizeHandle, string> = {
+  nw: "nw-resize", n:  "n-resize",  ne: "ne-resize",
+  e:  "e-resize",  se: "se-resize", s:  "s-resize",
+  sw: "sw-resize", w:  "w-resize",
+  start: "crosshair", end: "crosshair",
+};
 
 function cloneShape(shape: DrawingShape): DrawingShape {
   return JSON.parse(JSON.stringify(shape)) as DrawingShape;
@@ -98,6 +92,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   const startPosRef = useRef({ x: 0, y: 0 });
   const currentShapeRef = useRef<DrawingShape | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
+  const resizeStateRef = useRef<ResizeState | null>(null);
 
   // ── Text tool ──────────────────────────────────────────────────────────────
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -121,14 +116,16 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   const [cursors, setCursors] = useState<Map<string, RemoteCursor>>(new Map());
   const [copied, setCopied] = useState(false);
 
-  // ── Ref mirrors for drawImmediate (no React re-render cost) ───────────────
-  const remoteShapesRef = useRef<DrawingShape[]>([]);
-  const remoteStreamsRef = useRef<Map<string, DrawingShape>>(new Map());
-  useEffect(() => { remoteShapesRef.current = remoteShapes; }, [remoteShapes]);
-  useEffect(() => { remoteStreamsRef.current = remoteStreams; }, [remoteStreams]);
-
   // ── History ────────────────────────────────────────────────────────────────
   const { shapes, commit, undo, redo, clear, canUndo, canRedo } = useDrawHistory();
+
+  // ── Ref mirrors for drawImmediate (no React re-render cost) ───────────────
+  const shapesRef = useRef<DrawingShape[]>([]);
+  const remoteShapesRef = useRef<DrawingShape[]>([]);
+  const remoteStreamsRef = useRef<Map<string, DrawingShape>>(new Map());
+  useEffect(() => { shapesRef.current = shapes; }, [shapes]);
+  useEffect(() => { remoteShapesRef.current = remoteShapes; }, [remoteShapes]);
+  useEffect(() => { remoteStreamsRef.current = remoteStreams; }, [remoteStreams]);
 
   // ── WS handlers ───────────────────────────────────────────────────────────
   const wsHandlers: WsHandlers = {
@@ -271,12 +268,14 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
         strokeColor: settings.strokeColor,
         strokeWidth: settings.strokeWidth,
       };
-      commit([...shapes, shape]);
+      // Use shapesRef.current so we always have the latest shapes,
+      // even if this runs before React re-renders with fresh state
+      commit([...shapesRef.current, shape]);
       void sendDraw(shape);
     }
     setTextEditing(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings, shapes, commit, sendDraw]);
+  }, [settings, commit, sendDraw]);
 
   // ── Core pointer handlers (shared by mouse and touch) ──────────────────────
 
@@ -290,6 +289,21 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
     if (activeTool === "select") {
       const allShapes = [...shapes, ...remoteShapes];
+
+      // Check resize handles first (only when a shape is already selected)
+      if (selectedId) {
+        const selShape = allShapes.find((s) => s.id === selectedId);
+        if (selShape) {
+          const handle = hitTestHandle(selShape, x, y);
+          if (handle) {
+            resizeStateRef.current = { shapeId: selectedId, handle, snapshot: cloneShape(selShape) };
+            isDrawingRef.current = true;
+            return;
+          }
+        }
+      }
+
+      // Otherwise hit-test for move or deselect
       const hit = hitTest(allShapes, x, y);
       setSelectedId(hit?.id ?? null);
       if (hit) {
@@ -347,13 +361,50 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   const pointerMove = useCallback((x: number, y: number) => {
     sendCursorMove(x, y);
 
-    if (activeTool === "select" && dragStateRef.current) {
-      const drag = dragStateRef.current;
-      const dx = x - drag.startMouseX;
-      const dy = y - drag.startMouseY;
-      const movedShape = translateShape(drag.snapshot, dx, dy);
-      const allShapes = [...shapes, ...remoteShapes];
-      setTransientAll(allShapes.map((s) => (s.id === drag.shapeId ? movedShape : s)));
+    if (activeTool === "select") {
+      // ── Resize drag ──────────────────────────────────────────────────────────
+      if (resizeStateRef.current) {
+        const rs = resizeStateRef.current;
+        const newShape = resizeShape(rs.snapshot, rs.handle, x, y);
+        const allShapes = [...shapes, ...remoteShapes];
+        setTransientAll(allShapes.map((s) => (s.id === rs.shapeId ? newShape : s)));
+        if (canvasRef.current) canvasRef.current.style.cursor = handleCursorMap[rs.handle];
+        return;
+      }
+
+      // ── Move drag ────────────────────────────────────────────────────────────
+      if (dragStateRef.current) {
+        const drag = dragStateRef.current;
+        const dx = x - drag.startMouseX;
+        const dy = y - drag.startMouseY;
+        const movedShape = translateShape(drag.snapshot, dx, dy);
+        const allShapes = [...shapes, ...remoteShapes];
+        setTransientAll(allShapes.map((s) => (s.id === drag.shapeId ? movedShape : s)));
+        if (canvasRef.current) canvasRef.current.style.cursor = "move";
+        return;
+      }
+
+      // ── Hover: update cursor to show handles or move affordance ─────────────
+      if (canvasRef.current) {
+        if (selectedId) {
+          const allShapes = [...shapes, ...remoteShapes];
+          const selShape = allShapes.find((s) => s.id === selectedId);
+          if (selShape) {
+            const handle = hitTestHandle(selShape, x, y);
+            if (handle) {
+              canvasRef.current.style.cursor = handleCursorMap[handle];
+            } else if (hitTest([selShape], x, y)) {
+              canvasRef.current.style.cursor = "move";
+            } else {
+              canvasRef.current.style.cursor = "default";
+            }
+          } else {
+            canvasRef.current.style.cursor = "default";
+          }
+        } else {
+          canvasRef.current.style.cursor = "default";
+        }
+      }
       return;
     }
 
@@ -390,8 +441,10 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       updated = { ...cur, cx: (sx + x) / 2, cy: (sy + y) / 2, rx: Math.abs(x - sx) / 2, ry: Math.abs(y - sy) / 2 };
     } else if (cur.type === "line") {
       updated = { ...cur, x2: x, y2: y };
-    } else {
+    } else if (cur.type === "arrow") {
       updated = { ...cur, x2: x, y2: y };
+    } else {
+      return; // text / pencil handled above
     }
 
     currentShapeRef.current = updated;
@@ -401,6 +454,26 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   }, [activeTool, shapes, remoteShapes, selectedId, commit, sendEraser, sendCursorMove, sendStreamShape, drawImmediate]);
 
   const pointerUp = useCallback((x: number, y: number) => {
+    // ── Resize commit ──────────────────────────────────────────────────────────
+    if (activeTool === "select" && resizeStateRef.current) {
+      const rs = resizeStateRef.current;
+      const newShape = resizeShape(rs.snapshot, rs.handle, x, y);
+      const isRemote = remoteShapes.some((s) => s.id === rs.shapeId);
+      if (isRemote) {
+        setRemoteShapes((prev) => prev.filter((s) => s.id !== rs.shapeId));
+        commit([...shapesRef.current, newShape]);
+      } else {
+        commit(shapesRef.current.map((s) => (s.id === rs.shapeId ? newShape : s)));
+      }
+      void sendUpdate(newShape);
+      setTransientAll(null);
+      resizeStateRef.current = null;
+      isDrawingRef.current = false;
+      if (canvasRef.current) canvasRef.current.style.cursor = "default";
+      return;
+    }
+
+    // ── Move commit ────────────────────────────────────────────────────────────
     if (activeTool === "select" && dragStateRef.current) {
       const drag = dragStateRef.current;
       const dx = x - drag.startMouseX;
@@ -411,9 +484,9 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
         const isRemote = remoteShapes.some((s) => s.id === drag.shapeId);
         if (isRemote) {
           setRemoteShapes((prev) => prev.filter((s) => s.id !== drag.shapeId));
-          commit([...shapes, movedShape]);
+          commit([...shapesRef.current, movedShape]);
         } else {
-          commit(shapes.map((s) => (s.id === drag.shapeId ? movedShape : s)));
+          commit(shapesRef.current.map((s) => (s.id === drag.shapeId ? movedShape : s)));
         }
         void sendUpdate(movedShape);
       }
@@ -421,6 +494,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       setTransientAll(null);
       dragStateRef.current = null;
       isDrawingRef.current = false;
+      if (canvasRef.current) canvasRef.current.style.cursor = "default";
       return;
     }
 
@@ -431,13 +505,15 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     currentShapeRef.current = null;
 
     if (shape && activeTool !== "select" && activeTool !== "eraser" && isSignificantShape(shape)) {
-      commit([...shapes, shape]);
+      // Use shapesRef.current so text committed via onBlur (which runs before mouseup)
+      // is not lost when we write the next shape to history
+      commit([...shapesRef.current, shape]);
       void sendDraw(shape);
     } else {
-      drawImmediate(shapes);
+      drawImmediate(shapesRef.current);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool, shapes, remoteShapes, commit, sendDraw, sendUpdate, drawImmediate]);
+  }, [activeTool, remoteShapes, commit, sendDraw, sendUpdate, drawImmediate]);
 
   // ── Mouse event wrappers ───────────────────────────────────────────────────
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -512,6 +588,15 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [shapes, remoteShapes, selectedId, undo, redo, commit, sendEraser]);
 
+  // ── Focus textarea when text editing starts ────────────────────────────────
+  useEffect(() => {
+    if (textEditing) {
+      // setTimeout 0 lets React finish painting the element before focusing
+      const t = setTimeout(() => textareaRef.current?.focus(), 0);
+      return () => clearTimeout(t);
+    }
+  }, [textEditing]);
+
   // ── Copy link ──────────────────────────────────────────────────────────────
   const handleCopyLink = useCallback(() => {
     navigator.clipboard.writeText(window.location.href).then(() => {
@@ -584,11 +669,23 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       {/* Remote cursor overlay */}
       <CursorOverlay cursors={cursors} myConnectionId={connectionId} />
 
-      {/* Text tool inline editor */}
+      <canvas
+        ref={canvasRef}
+        className={styles.canvas}
+        style={{ cursor: cursorMap[activeTool], touchAction: "none" }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      />
+
+      {/* Text tool inline editor — rendered after canvas so it sits on top */}
       {textEditing && (
         <textarea
           ref={textareaRef}
-          autoFocus
           className={styles.textEditor}
           style={{
             left: textEditing.x,
@@ -603,6 +700,8 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
             ta.style.height = `${ta.scrollHeight}px`;
           }}
           onKeyDown={(e) => {
+            // Stop ALL keys from reaching the window keydown handler (toolbar shortcuts)
+            e.stopPropagation();
             if (e.key === "Escape") {
               commitText(e.currentTarget.value, textEditing);
             }
@@ -610,19 +709,6 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
           onBlur={(e) => commitText(e.currentTarget.value, textEditing)}
         />
       )}
-
-      <canvas
-        ref={canvasRef}
-        className={styles.canvas}
-        style={{ cursor: cursorMap[activeTool], touchAction: "none" }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-      />
     </div>
   );
 }

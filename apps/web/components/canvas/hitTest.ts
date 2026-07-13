@@ -1,4 +1,4 @@
-import type { DrawingShape } from "./types";
+import type { DrawingShape, ResizeHandle } from "./types";
 
 // ─── Bounding box ─────────────────────────────────────────────────────────────
 
@@ -165,6 +165,60 @@ function isHitPencil(
     }
   }
   return false;
+}
+
+// ─── Resize handle geometry ───────────────────────────────────────────────────
+
+const HANDLE_HIT_RADIUS = 9; // px — half-size of clickable hit area
+
+/**
+ * Returns the canvas position of every resize handle for a shape.
+ * Line/Arrow → 2 endpoint handles ("start"/"end").
+ * Everything else → 8 bbox handles (corners + edge midpoints).
+ */
+export function getHandlePositions(
+  shape: DrawingShape
+): { handle: ResizeHandle; x: number; y: number }[] {
+  if (shape.type === "line" || shape.type === "arrow") {
+    return [
+      { handle: "start", x: shape.x1, y: shape.y1 },
+      { handle: "end",   x: shape.x2, y: shape.y2 },
+    ];
+  }
+
+  const b  = getBBox(shape);
+  const mx = b.x + b.w / 2;
+  const my = b.y + b.h / 2;
+  const r  = b.x + b.w;
+  const bt = b.y + b.h;
+
+  return [
+    { handle: "nw", x: b.x, y: b.y },
+    { handle: "n",  x: mx,  y: b.y },
+    { handle: "ne", x: r,   y: b.y },
+    { handle: "e",  x: r,   y: my  },
+    { handle: "se", x: r,   y: bt  },
+    { handle: "s",  x: mx,  y: bt  },
+    { handle: "sw", x: b.x, y: bt  },
+    { handle: "w",  x: b.x, y: my  },
+  ];
+}
+
+/**
+ * Returns the handle under point (px, py) for the given shape, or null.
+ * Checked before shape body hit-test in the select tool.
+ */
+export function hitTestHandle(
+  shape: DrawingShape,
+  px: number,
+  py: number
+): ResizeHandle | null {
+  for (const { handle, x, y } of getHandlePositions(shape)) {
+    if (Math.abs(px - x) <= HANDLE_HIT_RADIUS && Math.abs(py - y) <= HANDLE_HIT_RADIUS) {
+      return handle;
+    }
+  }
+  return null;
 }
 
 function distToSegment(

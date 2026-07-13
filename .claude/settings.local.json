@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(du -sh /e/ProjectDraw/DrawApp/apps/* /e/ProjectDraw/DrawApp/packages/*)"
+      "Bash(du -sh /e/ProjectDraw/DrawApp/apps/* /e/ProjectDraw/DrawApp/packages/*)",
+      "Bash(pnpm --filter @repo/web tsc --noEmit)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

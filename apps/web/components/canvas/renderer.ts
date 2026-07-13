@@ -6,7 +6,7 @@ import rough from "roughjs";
 import type { RoughCanvas } from "roughjs/bin/canvas";
 import getStroke from "perfect-freehand";
 import type { DrawingShape } from "./types";
-import { getBBox } from "./hitTest";
+import { getBBox, getHandlePositions } from "./hitTest";
 
 const CANVAS_BG = "#06060a";
 const SELECTION_COLOR = "#7c3aed";
@@ -55,25 +55,29 @@ function renderShape(
   shape: DrawingShape
 ): void {
   switch (shape.type) {
-    case "rect":
+    case "rect": {
+      const hasFill = shape.fillColor !== "transparent";
       rc.rectangle(shape.x, shape.y, shape.w, shape.h, {
         stroke: shape.strokeColor,
         strokeWidth: shape.strokeWidth,
-        fill: shape.fillColor === "transparent" ? undefined : shape.fillColor,
-        fillStyle: "solid",
+        fill: hasFill ? shape.fillColor : undefined,
+        fillStyle: hasFill ? "solid" : "hachure",
         roughness: ROUGHNESS,
       });
       break;
+    }
 
-    case "ellipse":
+    case "ellipse": {
+      const hasFill = shape.fillColor !== "transparent";
       rc.ellipse(shape.cx, shape.cy, shape.rx * 2, shape.ry * 2, {
         stroke: shape.strokeColor,
         strokeWidth: shape.strokeWidth,
-        fill: shape.fillColor === "transparent" ? undefined : shape.fillColor,
-        fillStyle: "solid",
+        fill: hasFill ? shape.fillColor : undefined,
+        fillStyle: hasFill ? "solid" : "hachure",
         roughness: ROUGHNESS,
       });
       break;
+    }
 
     case "line":
       rc.line(shape.x1, shape.y1, shape.x2, shape.y2, {
@@ -200,24 +204,42 @@ function renderText(
   ctx.restore();
 }
 
-// ─── Selection box ────────────────────────────────────────────────────────────
+// ─── Selection box + resize handles ──────────────────────────────────────────
+
+const HANDLE_SIZE = 7; // half-side of each handle square in px
 
 function renderSelectionBox(
   ctx: CanvasRenderingContext2D,
   shape: DrawingShape
 ): void {
-  const PAD = 8;
-  const bbox = getBBox(shape);
+  // For line/arrow: skip the bounding-box rect, just show endpoint handles
+  if (shape.type !== "line" && shape.type !== "arrow") {
+    const PAD = 8;
+    const bbox = getBBox(shape);
 
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = SELECTION_COLOR;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(
+      bbox.x - PAD,
+      bbox.y - PAD,
+      bbox.w + PAD * 2,
+      bbox.h + PAD * 2
+    );
+    ctx.restore();
+  }
+
+  // Draw resize handles
+  const handles = getHandlePositions(shape);
   ctx.save();
-  ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = SELECTION_COLOR;
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(
-    bbox.x - PAD,
-    bbox.y - PAD,
-    bbox.w + PAD * 2,
-    bbox.h + PAD * 2
-  );
+  ctx.setLineDash([]);
+  for (const { x, y } of handles) {
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = SELECTION_COLOR;
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(x - HANDLE_SIZE, y - HANDLE_SIZE, HANDLE_SIZE * 2, HANDLE_SIZE * 2);
+    ctx.strokeRect(x - HANDLE_SIZE, y - HANDLE_SIZE, HANDLE_SIZE * 2, HANDLE_SIZE * 2);
+  }
   ctx.restore();
 }
