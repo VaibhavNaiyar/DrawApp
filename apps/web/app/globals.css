@@ -1,26 +1,107 @@
+/* ─── Dark theme (default) ─────────────────────────────────────────────────── */
 :root {
   --bg-0: #06060a;
   --bg-1: #0c0c14;
   --bg-2: #12121e;
   --bg-3: #181828;
-  --border: #1a1a2e;
+  --border:     #1a1a2e;
   --border-mid: #252540;
-  --border-hi: #3a3a60;
-  --accent: #7c3aed;
+  --border-hi:  #3a3a60;
+  --accent:        #7c3aed;
   --accent-bright: #9b6dff;
-  --accent-dim: #3b1f8a;
-  --accent-glow: rgba(124, 58, 237, 0.25);
-  --green: #10b981;
+  --accent-dim:    #3b1f8a;
+  --accent-glow:   rgba(124, 58, 237, 0.25);
+  --green:     #10b981;
   --green-dim: rgba(16, 185, 129, 0.15);
-  --red: #ef4444;
-  --red-dim: rgba(239, 68, 68, 0.15);
+  --red:       #ef4444;
+  --red-dim:   rgba(239, 68, 68, 0.15);
   --text-0: #f0f0fa;
   --text-1: #9898b8;
   --text-2: #4a4a6a;
   --text-3: #2a2a40;
-  --font-display: var(--font-syne), system-ui, sans-serif;
-  --font-body: var(--font-geist-sans), system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), monospace;
+  --font-display:     var(--font-syne),      system-ui, sans-serif;
+  --font-body:        var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono:        var(--font-geist-mono), monospace;
+  --font-handwritten: var(--font-caveat),     cursive;
+
+  /* Canvas + toolbar tokens */
+  --canvas-bg:             #06060a;
+  --canvas-stroke-default: #e2e8f0;
+
+  --toolbar-bg:               rgba(12, 12, 22, 0.88);
+  --toolbar-border:           rgba(255, 255, 255, 0.08);
+  --toolbar-shadow:           0 8px 32px rgba(0, 0, 0, 0.5);
+  --toolbar-icon:             rgba(255, 255, 255, 0.55);
+  --toolbar-icon-hover:       rgba(255, 255, 255, 0.9);
+  --toolbar-hover-bg:         rgba(255, 255, 255, 0.07);
+  --toolbar-hover-bg-strong:  rgba(255, 255, 255, 0.14);
+  --toolbar-divider:          rgba(255, 255, 255, 0.07);
+  --toolbar-color-label:      rgba(255, 255, 255, 0.3);
+  --toolbar-swatch-border:    rgba(255, 255, 255, 0.15);
+  --toolbar-check-bg:         rgba(255, 255, 255, 0.08);
+  --toolbar-slider-track:     rgba(255, 255, 255, 0.18);
+  --toolbar-tooltip-bg:       rgba(15, 15, 28, 0.95);
+  --toolbar-tooltip-border:   rgba(255, 255, 255, 0.1);
+  --toolbar-tooltip-text:     rgba(255, 255, 255, 0.85);
+  --toolbar-action-color:     rgba(255, 255, 255, 0.45);
+  --toolbar-fontsize-border:  rgba(255, 255, 255, 0.1);
+  --toolbar-fontsize-color:   rgba(255, 255, 255, 0.5);
+
+  --badge-bg:          rgba(12, 12, 22, 0.88);
+  --badge-border:      rgba(255, 255, 255, 0.08);
+  --badge-shadow:      0 4px 16px rgba(0, 0, 0, 0.4);
+  --badge-text:        rgba(255, 255, 255, 0.5);
+  --badge-text-strong: rgba(255, 255, 255, 0.85);
+  --badge-btn-color:   rgba(255, 255, 255, 0.5);
+  --badge-btn-border:  rgba(255, 255, 255, 0.12);
+  --badge-btn-hover:   rgba(255, 255, 255, 0.9);
+}
+
+/* ─── Light theme overrides ────────────────────────────────────────────────── */
+:root[data-theme="light"] {
+  --bg-0: #f8f8f5;
+  --bg-1: #ffffff;
+  --bg-2: #f0f0ed;
+  --bg-3: #e8e8e4;
+  --border:     rgba(0, 0, 0, 0.08);
+  --border-mid: rgba(0, 0, 0, 0.15);
+  --border-hi:  rgba(0, 0, 0, 0.28);
+  --text-0: #1e1e2e;
+  --text-1: #4a4a6a;
+  --text-2: #8a8aaa;
+  --text-3: #c0c0d8;
+
+  /* Canvas + toolbar tokens */
+  --canvas-bg:             #f8f8f5;
+  --canvas-stroke-default: #1e1e2e;
+
+  --toolbar-bg:               rgba(255, 255, 255, 0.92);
+  --toolbar-border:           rgba(0, 0, 0, 0.1);
+  --toolbar-shadow:           0 4px 16px rgba(0, 0, 0, 0.1);
+  --toolbar-icon:             rgba(0, 0, 0, 0.5);
+  --toolbar-icon-hover:       rgba(0, 0, 0, 0.85);
+  --toolbar-hover-bg:         rgba(0, 0, 0, 0.06);
+  --toolbar-hover-bg-strong:  rgba(0, 0, 0, 0.1);
+  --toolbar-divider:          rgba(0, 0, 0, 0.07);
+  --toolbar-color-label:      rgba(0, 0, 0, 0.35);
+  --toolbar-swatch-border:    rgba(0, 0, 0, 0.15);
+  --toolbar-check-bg:         rgba(0, 0, 0, 0.07);
+  --toolbar-slider-track:     rgba(0, 0, 0, 0.15);
+  --toolbar-tooltip-bg:       rgba(255, 255, 255, 0.97);
+  --toolbar-tooltip-border:   rgba(0, 0, 0, 0.1);
+  --toolbar-tooltip-text:     rgba(0, 0, 0, 0.75);
+  --toolbar-action-color:     rgba(0, 0, 0, 0.4);
+  --toolbar-fontsize-border:  rgba(0, 0, 0, 0.12);
+  --toolbar-fontsize-color:   rgba(0, 0, 0, 0.45);
+
+  --badge-bg:          rgba(255, 255, 255, 0.92);
+  --badge-border:      rgba(0, 0, 0, 0.1);
+  --badge-shadow:      0 2px 8px rgba(0, 0, 0, 0.08);
+  --badge-text:        rgba(0, 0, 0, 0.45);
+  --badge-text-strong: rgba(0, 0, 0, 0.75);
+  --badge-btn-color:   rgba(0, 0, 0, 0.45);
+  --badge-btn-border:  rgba(0, 0, 0, 0.12);
+  --badge-btn-hover:   rgba(0, 0, 0, 0.85);
 }
 
 *, *::before, *::after {
@@ -36,6 +117,7 @@ html, body {
   color: var(--text-0);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
+  transition: background 0.2s, color 0.2s;
 }
 
 a {

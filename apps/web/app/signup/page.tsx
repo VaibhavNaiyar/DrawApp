@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import styles from "./signup.module.css";
+import ThemeToggle from "@/components/ui/ThemeToggle";
 
 export default function SignupPage() {
   const [name, setName] = useState("");
@@ -58,6 +59,9 @@ export default function SignupPage() {
 
   return (
     <div className={styles.split}>
+      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 50 }}>
+        <ThemeToggle variant="icon" />
+      </div>
       {/* Left art panel */}
       <div className={styles.artPanel}>
         <div className={styles.orb1} />

@@ -43,6 +43,15 @@ const TOOLS: { id: Tool; tip: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: "diamond",
+    tip: "Diamond  [D]",
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 3 L21 12 L12 21 L3 12 Z" />
+      </svg>
+    ),
+  },
+  {
     id: "line",
     tip: "Line  [L]",
     icon: (

@@ -16,6 +16,7 @@ import type {
   LineShape,
   ArrowShape,
   TextShape,
+  DiamondShape,
   RemoteCursor,
 } from "./types";
 import { createRoughCanvas, renderCanvas } from "./renderer";
@@ -34,6 +35,8 @@ import {
 } from "./crypto";
 import CursorOverlay from "./CursorOverlay";
 import Toolbar from "./Toolbar";
+import ThemeToggle from "@/components/ui/ThemeToggle";
+import { useTheme } from "@/components/ThemeProvider";
 import styles from "./DrawCanvas.module.css";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -55,11 +58,54 @@ function cloneShape(shape: DrawingShape): DrawingShape {
   return JSON.parse(JSON.stringify(shape)) as DrawingShape;
 }
 
+/**
+ * Analyses the recorded mouse path and returns a bezier control point
+ * if the user curved their stroke. Returns {} if the path is straight.
+ */
+function computeArrowControlPoint(
+  x1: number, y1: number,
+  x2: number, y2: number,
+  path: [number, number][]
+): { cx?: number; cy?: number } {
+  if (path.length < 4) return {};
+
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 10) return {};
+
+  // Unit perpendicular (left-hand side of the direction)
+  const px = -dy / len;
+  const py =  dx / len;
+
+  // Find the maximum signed perpendicular deviation along the path
+  let maxDev = 0;
+  for (const [mx, my] of path) {
+    const t = ((mx - x1) * dx + (my - y1) * dy) / (len * len);
+    if (t < 0 || t > 1) continue; // outside the segment
+    const projX = x1 + t * dx;
+    const projY = y1 + t * dy;
+    const dev = (mx - projX) * px + (my - projY) * py;
+    if (Math.abs(dev) > Math.abs(maxDev)) maxDev = dev;
+  }
+
+  const CURVE_THRESHOLD = 18; // px — min deviation before we consider it curved
+  if (Math.abs(maxDev) < CURVE_THRESHOLD) return {};
+
+  // Quadratic bezier CP that makes B(0.5) pass through the deviated midpoint:
+  // CP = midlinePoint + 2 * maxDev * perpendicular
+  const cx = (x1 + x2) / 2 + 2 * maxDev * px;
+  const cy = (y1 + y2) / 2 + 2 * maxDev * py;
+
+  return { cx, cy };
+}
+
 function isSignificantShape(shape: DrawingShape): boolean {
   switch (shape.type) {
     case "pencil":   return shape.points.length > 1;
     case "rect":     return shape.w > 2 && shape.h > 2;
     case "ellipse":  return shape.rx > 2 && shape.ry > 2;
+    case "diamond":  return shape.rx > 2 && shape.ry > 2;
     case "line":
     case "arrow":    return Math.hypot(shape.x2 - shape.x1, shape.y2 - shape.y1) > 4;
     case "text":     return shape.text.trim().length > 0;
@@ -80,8 +126,14 @@ interface DrawCanvasProps {
   userName: string;
 }
 
+const DARK_DEFAULT_STROKE  = "#e2e8f0";
+const LIGHT_DEFAULT_STROKE = "#1e1e2e";
+const DARK_CANVAS_BG  = "#06060a";
+const LIGHT_CANVAS_BG = "#f8f8f5";
+
 export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps) {
   const router = useRouter();
+  const { theme } = useTheme();
 
   // ── Canvas refs ────────────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -93,6 +145,18 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   const currentShapeRef = useRef<DrawingShape | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const resizeStateRef = useRef<ResizeState | null>(null);
+  const arrowPathRef = useRef<[number, number][]>([]);
+  const lastDrawTimeRef = useRef(0);
+
+  // ── Viewport pan ───────────────────────────────────────────────────────────
+  /** Always-current pan — used in drawImmediate and coordinate conversion */
+  const panRef = useRef({ x: 0, y: 0 });
+  /** React state copy — triggers the render-loop effect when a pan drag ends */
+  const [panState, setPanState] = useState({ x: 0, y: 0 });
+  const panDragRef = useRef<{
+    startMouseX: number; startMouseY: number;
+    startPanX: number;  startPanY: number;
+  } | null>(null);
 
   // ── Text tool ──────────────────────────────────────────────────────────────
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -103,11 +167,20 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   // ── React state ────────────────────────────────────────────────────────────
   const [activeTool, setActiveTool] = useState<Tool>("pencil");
   const [settings, setSettings] = useState<CanvasSettings>({
-    strokeColor: "#e2e8f0",
+    strokeColor: LIGHT_DEFAULT_STROKE,
     fillColor: "transparent",
     strokeWidth: 2,
     fontSize: 20,
   });
+
+  // Auto-switch default stroke color when theme changes
+  useEffect(() => {
+    const newDefault = theme === "dark" ? DARK_DEFAULT_STROKE : LIGHT_DEFAULT_STROKE;
+    const oldDefault = theme === "dark" ? LIGHT_DEFAULT_STROKE : DARK_DEFAULT_STROKE;
+    setSettings((s) =>
+      s.strokeColor === oldDefault ? { ...s, strokeColor: newDefault } : s
+    );
+  }, [theme]);
   const [textEditing, setTextEditing] = useState<{ id: string; x: number; y: number } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transientAll, setTransientAll] = useState<DrawingShape[] | null>(null);
@@ -118,6 +191,10 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
   // ── History ────────────────────────────────────────────────────────────────
   const { shapes, commit, undo, redo, clear, canUndo, canRedo } = useDrawHistory();
+
+  // ── Theme ref (used inside useCallback without stale closure) ────────────
+  const themeRef = useRef(theme);
+  useEffect(() => { themeRef.current = theme; }, [theme]);
 
   // ── Ref mirrors for drawImmediate (no React re-render cost) ───────────────
   const shapesRef = useRef<DrawingShape[]>([]);
@@ -197,7 +274,8 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       const ctx = canvas.getContext("2d");
       if (!rc || !ctx) return;
       const base = transientAll ?? [...shapes, ...remoteShapes];
-      renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId);
+      const bg = themeRef.current === "dark" ? DARK_CANVAS_BG : LIGHT_CANVAS_BG;
+      renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId, panRef.current, bg);
     }
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
@@ -221,21 +299,28 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const base = transientAll ?? [...shapes, ...remoteShapes];
-    renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId);
-  }, [shapes, transientAll, remoteShapes, remoteStreams, selectedId]);
+    const bg = theme === "dark" ? DARK_CANVAS_BG : LIGHT_CANVAS_BG;
+    renderCanvas(ctx, [...base, ...Array.from(remoteStreams.values())], rc, selectedId, panState, bg);
+  }, [shapes, transientAll, remoteShapes, remoteStreams, selectedId, panState, theme]);
 
   // ── Imperative draw (bypasses React for 60fps local preview) ──────────────
   const drawImmediate = useCallback((localWithPreview: DrawingShape[]) => {
+    const now = performance.now();
+    if (now - lastDrawTimeRef.current < 33) return; // ~30 fps
+    lastDrawTimeRef.current = now;
     const canvas = canvasRef.current;
     const rc = roughCanvasRef.current;
     if (!canvas || !rc) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const bg = themeRef.current === "dark" ? DARK_CANVAS_BG : LIGHT_CANVAS_BG;
     renderCanvas(
       ctx,
       [...localWithPreview, ...remoteShapesRef.current, ...Array.from(remoteStreamsRef.current.values())],
       rc,
-      null
+      null,
+      panRef.current,
+      bg
     );
   }, []);
 
@@ -279,7 +364,10 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
   // ── Core pointer handlers (shared by mouse and touch) ──────────────────────
 
-  const pointerDown = useCallback((x: number, y: number) => {
+  const pointerDown = useCallback((screenX: number, screenY: number) => {
+    // Convert screen → world (accounts for pan offset)
+    const x = screenX - panRef.current.x;
+    const y = screenY - panRef.current.y;
     startPosRef.current = { x, y };
 
     if (activeTool === "text") {
@@ -303,12 +391,19 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
         }
       }
 
-      // Otherwise hit-test for move or deselect
+      // Check shape body for move
       const hit = hitTest(allShapes, x, y);
       setSelectedId(hit?.id ?? null);
       if (hit) {
         dragStateRef.current = { shapeId: hit.id, startMouseX: x, startMouseY: y, snapshot: cloneShape(hit) };
         isDrawingRef.current = true;
+      } else {
+        // Empty-space click → start pan drag
+        panDragRef.current = {
+          startMouseX: screenX, startMouseY: screenY,
+          startPanX: panRef.current.x, startPanY: panRef.current.y,
+        };
+        if (canvasRef.current) canvasRef.current.style.cursor = "grabbing";
       }
       return;
     }
@@ -348,9 +443,13 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     } else if (activeTool === "line") {
       const s: LineShape = { ...base, type: "line", x1: x, y1: y, x2: x, y2: y };
       shape = s;
+    } else if (activeTool === "diamond") {
+      const s: DiamondShape = { ...base, type: "diamond", cx: x, cy: y, rx: 0, ry: 0, fillColor: settings.fillColor };
+      shape = s;
     } else {
       const s: ArrowShape = { ...base, type: "arrow", x1: x, y1: y, x2: x, y2: y };
       shape = s;
+      arrowPathRef.current = [[x, y]];
     }
 
     currentShapeRef.current = shape;
@@ -358,10 +457,25 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool, settings, shapes, remoteShapes, selectedId, commit, sendEraser, drawImmediate]);
 
-  const pointerMove = useCallback((x: number, y: number) => {
+  const pointerMove = useCallback((screenX: number, screenY: number) => {
+    // Convert screen → world
+    const x = screenX - panRef.current.x;
+    const y = screenY - panRef.current.y;
     sendCursorMove(x, y);
 
     if (activeTool === "select") {
+      // ── Pan drag ─────────────────────────────────────────────────────────────
+      if (panDragRef.current) {
+        const pd = panDragRef.current;
+        panRef.current = {
+          x: pd.startPanX + (screenX - pd.startMouseX),
+          y: pd.startPanY + (screenY - pd.startMouseY),
+        };
+        drawImmediate(shapesRef.current);
+        if (canvasRef.current) canvasRef.current.style.cursor = "grabbing";
+        return;
+      }
+
       // ── Resize drag ──────────────────────────────────────────────────────────
       if (resizeStateRef.current) {
         const rs = resizeStateRef.current;
@@ -384,7 +498,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
         return;
       }
 
-      // ── Hover: update cursor to show handles or move affordance ─────────────
+      // ── Hover: update cursor to reflect affordance under pointer ─────────────
       if (canvasRef.current) {
         if (selectedId) {
           const allShapes = [...shapes, ...remoteShapes];
@@ -396,13 +510,14 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
             } else if (hitTest([selShape], x, y)) {
               canvasRef.current.style.cursor = "move";
             } else {
-              canvasRef.current.style.cursor = "default";
+              canvasRef.current.style.cursor = "grab";
             }
           } else {
-            canvasRef.current.style.cursor = "default";
+            canvasRef.current.style.cursor = "grab";
           }
         } else {
-          canvasRef.current.style.cursor = "default";
+          // No selection — show grab on everything (pan affordance)
+          canvasRef.current.style.cursor = hitTest([...shapes, ...remoteShapes], x, y) ? "move" : "grab";
         }
       }
       return;
@@ -439,12 +554,16 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       updated = { ...cur, x: Math.min(sx, x), y: Math.min(sy, y), w: Math.abs(x - sx), h: Math.abs(y - sy) };
     } else if (cur.type === "ellipse") {
       updated = { ...cur, cx: (sx + x) / 2, cy: (sy + y) / 2, rx: Math.abs(x - sx) / 2, ry: Math.abs(y - sy) / 2 };
+    } else if (cur.type === "diamond") {
+      updated = { ...cur, cx: (sx + x) / 2, cy: (sy + y) / 2, rx: Math.abs(x - sx) / 2, ry: Math.abs(y - sy) / 2 };
     } else if (cur.type === "line") {
       updated = { ...cur, x2: x, y2: y };
     } else if (cur.type === "arrow") {
-      updated = { ...cur, x2: x, y2: y };
+      arrowPathRef.current.push([x, y]);
+      const cp = computeArrowControlPoint(cur.x1, cur.y1, x, y, arrowPathRef.current);
+      updated = { ...cur, x2: x, y2: y, ...cp };
     } else {
-      return; // text / pencil handled above
+      return;
     }
 
     currentShapeRef.current = updated;
@@ -453,7 +572,20 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool, shapes, remoteShapes, selectedId, commit, sendEraser, sendCursorMove, sendStreamShape, drawImmediate]);
 
-  const pointerUp = useCallback((x: number, y: number) => {
+  const pointerUp = useCallback((screenX: number, screenY: number) => {
+    // Convert screen → world
+    const x = screenX - panRef.current.x;
+    const y = screenY - panRef.current.y;
+
+    // ── Pan commit ─────────────────────────────────────────────────────────────
+    if (activeTool === "select" && panDragRef.current) {
+      panDragRef.current = null;
+      // Sync React state so the render-loop re-runs with the final pan
+      setPanState({ ...panRef.current });
+      if (canvasRef.current) canvasRef.current.style.cursor = "grab";
+      return;
+    }
+
     // ── Resize commit ──────────────────────────────────────────────────────────
     if (activeTool === "select" && resizeStateRef.current) {
       const rs = resizeStateRef.current;
@@ -469,7 +601,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       setTransientAll(null);
       resizeStateRef.current = null;
       isDrawingRef.current = false;
-      if (canvasRef.current) canvasRef.current.style.cursor = "default";
+      if (canvasRef.current) canvasRef.current.style.cursor = "grab";
       return;
     }
 
@@ -494,7 +626,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
       setTransientAll(null);
       dragStateRef.current = null;
       isDrawingRef.current = false;
-      if (canvasRef.current) canvasRef.current.style.cursor = "default";
+      if (canvasRef.current) canvasRef.current.style.cursor = "grab";
       return;
     }
 
@@ -579,7 +711,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
       const toolMap: Record<string, Tool> = {
         s: "select", p: "pencil", r: "rect",
-        e: "ellipse", l: "line", a: "arrow", x: "eraser", t: "text",
+        e: "ellipse", l: "line", a: "arrow", x: "eraser", t: "text", d: "diamond",
       };
       const tool = toolMap[e.key.toLowerCase()];
       if (tool) setActiveTool(tool);
@@ -613,9 +745,9 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
 
   // ── Cursor style ───────────────────────────────────────────────────────────
   const cursorMap: Record<Tool, string> = {
-    select: "default", pencil: "crosshair", rect: "crosshair",
+    select: "grab", pencil: "crosshair", rect: "crosshair",
     ellipse: "crosshair", line: "crosshair", arrow: "crosshair", eraser: "cell",
-    text: "text",
+    text: "text", diamond: "crosshair",
   };
 
   // ── Online count ───────────────────────────────────────────────────────────
@@ -664,6 +796,9 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
           className={isConnected ? styles.dotOnline : styles.dotOffline}
           title={isConnected ? "connected" : "connecting…"}
         />
+
+        {/* Theme toggle */}
+        <ThemeToggle variant="icon" />
       </div>
 
       {/* Remote cursor overlay */}
@@ -688,8 +823,9 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
           ref={textareaRef}
           className={styles.textEditor}
           style={{
-            left: textEditing.x,
-            top: textEditing.y,
+            // textEditing stores world coords; add pan to get screen position
+            left: textEditing.x + panState.x,
+            top: textEditing.y + panState.y,
             fontSize: settings.fontSize,
             color: settings.strokeColor,
           }}

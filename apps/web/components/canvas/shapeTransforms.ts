@@ -10,6 +10,7 @@ import type {
   LineShape,
   ArrowShape,
   PencilShape,
+  DiamondShape,
 } from "./types";
 import { getBBox } from "./hitTest";
 
@@ -24,6 +25,8 @@ export function translateShape(shape: DrawingShape, dx: number, dy: number): Dra
     case "rect":
       return { ...shape, x: shape.x + dx, y: shape.y + dy };
     case "ellipse":
+      return { ...shape, cx: shape.cx + dx, cy: shape.cy + dy };
+    case "diamond":
       return { ...shape, cx: shape.cx + dx, cy: shape.cy + dy };
     case "line":
     case "arrow":
@@ -48,6 +51,7 @@ export function resizeShape(
   switch (snapshot.type) {
     case "rect":    return resizeRect(snapshot, handle, mx, my);
     case "ellipse": return resizeEllipse(snapshot, handle, mx, my);
+    case "diamond": return resizeDiamond(snapshot, handle, mx, my);
     case "line":
     case "arrow":   return resizeLineArrow(snapshot, handle, mx, my);
     case "pencil":  return resizePencil(snapshot, handle, mx, my);
@@ -106,6 +110,28 @@ function resizeEllipse(shape: EllipseShape, handle: ResizeHandle, mx: number, my
       newH = Math.max(my - b.y, MIN_SIZE); break;
     case "w":
       newX = Math.min(mx, right - MIN_SIZE); newW = Math.max(right - mx, MIN_SIZE); break;
+    default: break;
+  }
+
+  return { ...shape, cx: newX + newW / 2, cy: newY + newH / 2, rx: newW / 2, ry: newH / 2 };
+}
+
+function resizeDiamond(shape: DiamondShape, handle: ResizeHandle, mx: number, my: number): DiamondShape {
+  const b = getBBox(shape);
+  let newX = b.x, newY = b.y, newW = b.w, newH = b.h;
+  const right  = b.x + b.w;
+  const bottom = b.y + b.h;
+  const MIN = 4;
+
+  switch (handle) {
+    case "nw": newX = Math.min(mx, right  - MIN); newY = Math.min(my, bottom - MIN); newW = Math.max(right  - mx, MIN); newH = Math.max(bottom - my, MIN); break;
+    case "n":  newY = Math.min(my, bottom - MIN); newH = Math.max(bottom - my, MIN); break;
+    case "ne": newY = Math.min(my, bottom - MIN); newW = Math.max(mx - b.x, MIN); newH = Math.max(bottom - my, MIN); break;
+    case "e":  newW = Math.max(mx - b.x, MIN); break;
+    case "se": newW = Math.max(mx - b.x, MIN); newH = Math.max(my - b.y, MIN); break;
+    case "s":  newH = Math.max(my - b.y, MIN); break;
+    case "sw": newX = Math.min(mx, right - MIN); newW = Math.max(right - mx, MIN); newH = Math.max(my - b.y, MIN); break;
+    case "w":  newX = Math.min(mx, right - MIN); newW = Math.max(right - mx, MIN); break;
     default: break;
   }
 

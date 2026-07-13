@@ -8,7 +8,7 @@ import getStroke from "perfect-freehand";
 import type { DrawingShape } from "./types";
 import { getBBox, getHandlePositions } from "./hitTest";
 
-const CANVAS_BG = "#06060a";
+const CANVAS_BG = "#f8f8f5";
 const SELECTION_COLOR = "#7c3aed";
 const ROUGHNESS = 1.2;
 const ARROW_HEAD_LEN = 14;
@@ -30,14 +30,19 @@ export function renderCanvas(
   ctx: CanvasRenderingContext2D,
   shapes: DrawingShape[],
   rc: RoughCanvas,
-  selectedId: string | null
+  selectedId: string | null,
+  pan: { x: number; y: number } = { x: 0, y: 0 },
+  canvasBg?: string
 ): void {
   const { width, height } = ctx.canvas;
   ctx.clearRect(0, 0, width, height);
 
-  // Fill with the app's dark background
-  ctx.fillStyle = CANVAS_BG;
+  ctx.fillStyle = canvasBg ?? CANVAS_BG;
   ctx.fillRect(0, 0, width, height);
+
+  // Apply viewport pan so shapes are in world space
+  ctx.save();
+  ctx.translate(pan.x, pan.y);
 
   for (const shape of shapes) {
     renderShape(ctx, rc, shape);
@@ -45,6 +50,8 @@ export function renderCanvas(
       renderSelectionBox(ctx, shape);
     }
   }
+
+  ctx.restore();
 }
 
 // ─── Shape rendering ──────────────────────────────────────────────────────────
@@ -91,6 +98,26 @@ function renderShape(
       renderArrow(ctx, rc, shape);
       break;
 
+    case "diamond": {
+      const hasFill = shape.fillColor !== "transparent";
+      rc.polygon(
+        [
+          [shape.cx,            shape.cy - shape.ry],
+          [shape.cx + shape.rx, shape.cy           ],
+          [shape.cx,            shape.cy + shape.ry],
+          [shape.cx - shape.rx, shape.cy           ],
+        ] as [number, number][],
+        {
+          stroke: shape.strokeColor,
+          strokeWidth: shape.strokeWidth,
+          fill: hasFill ? shape.fillColor : undefined,
+          fillStyle: hasFill ? "solid" : "hachure",
+          roughness: ROUGHNESS,
+        }
+      );
+      break;
+    }
+
     case "pencil":
       renderPencil(ctx, shape);
       break;
@@ -104,29 +131,46 @@ function renderShape(
 function renderArrow(
   ctx: CanvasRenderingContext2D,
   rc: RoughCanvas,
-  shape: { x1: number; y1: number; x2: number; y2: number; strokeColor: string; strokeWidth: number }
+  shape: { x1: number; y1: number; x2: number; y2: number; cx?: number; cy?: number; strokeColor: string; strokeWidth: number }
 ): void {
-  rc.line(shape.x1, shape.y1, shape.x2, shape.y2, {
-    stroke: shape.strokeColor,
-    strokeWidth: shape.strokeWidth,
-    roughness: 0.5, // less roughness so the arrow tip looks intentional
-  });
+  const { x1, y1, x2, y2, cx, cy, strokeColor, strokeWidth } = shape;
 
-  const angle = Math.atan2(shape.y2 - shape.y1, shape.x2 - shape.x1);
+  if (cx !== undefined && cy !== undefined) {
+    // Curved arrow — draw as quadratic bezier via SVG path
+    rc.path(`M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`, {
+      stroke: strokeColor,
+      strokeWidth,
+      roughness: 0.5,
+    });
+    // Arrowhead tangent at t=1: direction from CP to endpoint
+    drawArrowHead(ctx, x2, y2, Math.atan2(y2 - cy, x2 - cx), strokeColor, strokeWidth);
+  } else {
+    // Straight arrow
+    rc.line(x1, y1, x2, y2, { stroke: strokeColor, strokeWidth, roughness: 0.5 });
+    drawArrowHead(ctx, x2, y2, Math.atan2(y2 - y1, x2 - x1), strokeColor, strokeWidth);
+  }
+}
 
+function drawArrowHead(
+  ctx: CanvasRenderingContext2D,
+  tipX: number, tipY: number,
+  angle: number,
+  strokeColor: string,
+  strokeWidth: number
+): void {
   ctx.beginPath();
-  ctx.moveTo(shape.x2, shape.y2);
+  ctx.moveTo(tipX, tipY);
   ctx.lineTo(
-    shape.x2 - ARROW_HEAD_LEN * Math.cos(angle - ARROW_HEAD_ANGLE),
-    shape.y2 - ARROW_HEAD_LEN * Math.sin(angle - ARROW_HEAD_ANGLE)
+    tipX - ARROW_HEAD_LEN * Math.cos(angle - ARROW_HEAD_ANGLE),
+    tipY - ARROW_HEAD_LEN * Math.sin(angle - ARROW_HEAD_ANGLE)
   );
-  ctx.moveTo(shape.x2, shape.y2);
+  ctx.moveTo(tipX, tipY);
   ctx.lineTo(
-    shape.x2 - ARROW_HEAD_LEN * Math.cos(angle + ARROW_HEAD_ANGLE),
-    shape.y2 - ARROW_HEAD_LEN * Math.sin(angle + ARROW_HEAD_ANGLE)
+    tipX - ARROW_HEAD_LEN * Math.cos(angle + ARROW_HEAD_ANGLE),
+    tipY - ARROW_HEAD_LEN * Math.sin(angle + ARROW_HEAD_ANGLE)
   );
-  ctx.strokeStyle = shape.strokeColor;
-  ctx.lineWidth = shape.strokeWidth;
+  ctx.strokeStyle = strokeColor;
+  ctx.lineWidth = strokeWidth;
   ctx.lineCap = "round";
   ctx.stroke();
 }
@@ -193,7 +237,7 @@ function renderText(
   shape: { x: number; y: number; text: string; fontSize: number; strokeColor: string }
 ): void {
   ctx.save();
-  ctx.font = `${shape.fontSize}px Inter, system-ui, sans-serif`;
+  ctx.font = `${shape.fontSize}px Caveat, cursive`;
   ctx.fillStyle = shape.strokeColor;
   ctx.textBaseline = "top";
   const lines = shape.text.split("\n");

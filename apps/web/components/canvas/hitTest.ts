@@ -22,6 +22,9 @@ export function getBBox(shape: DrawingShape): BBox {
         h: shape.ry * 2,
       };
 
+    case "diamond":
+      return { x: shape.cx - shape.rx, y: shape.cy - shape.ry, w: shape.rx * 2, h: shape.ry * 2 };
+
     case "line":
     case "arrow": {
       const minX = Math.min(shape.x1, shape.x2);
@@ -90,6 +93,8 @@ function isHit(shape: DrawingShape, px: number, py: number): boolean {
       return isHitRect(shape, px, py);
     case "ellipse":
       return isHitEllipse(shape, px, py);
+    case "diamond":
+      return isHitDiamond(shape, px, py);
     case "line":
     case "arrow":
       return distToSegment(px, py, shape.x1, shape.y1, shape.x2, shape.y2) <= EDGE_TOLERANCE + shape.strokeWidth;
@@ -147,6 +152,23 @@ function isHitEllipse(
     return d <= 1 && innerDx * innerDx + innerDy * innerDy >= 1;
   }
 
+  return d <= 1;
+}
+
+function isHitDiamond(
+  shape: { cx: number; cy: number; rx: number; ry: number; fillColor: string },
+  px: number,
+  py: number
+): boolean {
+  const dx = (px - shape.cx) / (shape.rx + EDGE_TOLERANCE);
+  const dy = (py - shape.cy) / (shape.ry + EDGE_TOLERANCE);
+  const d = Math.abs(dx) + Math.abs(dy); // L1-norm test for diamond
+
+  if (shape.fillColor === "transparent") {
+    const innerDx = (px - shape.cx) / Math.max(shape.rx - EDGE_TOLERANCE, 1);
+    const innerDy = (py - shape.cy) / Math.max(shape.ry - EDGE_TOLERANCE, 1);
+    return d <= 1 && Math.abs(innerDx) + Math.abs(innerDy) >= 1;
+  }
   return d <= 1;
 }
 

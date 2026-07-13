@@ -1,0 +1,52 @@
+/* Pill variant — used in headers */
+.pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: transparent;
+  border: 1px solid var(--border-mid);
+  border-radius: 8px;
+  color: var(--text-1);
+  font-size: 13px;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+
+.pill:hover {
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+
+.pill svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+/* Icon-only variant — used in canvas badge / auth pages */
+.iconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--toolbar-hover-bg, rgba(255,255,255,0.07));
+  border: 1px solid var(--toolbar-border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  color: var(--toolbar-icon, rgba(255,255,255,0.55));
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.iconBtn:hover {
+  background: var(--toolbar-hover-bg-strong, rgba(255,255,255,0.14));
+  color: var(--toolbar-icon-hover, rgba(255,255,255,0.9));
+}
+
+.iconBtn svg {
+  width: 16px;
+  height: 16px;
+}

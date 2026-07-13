@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import styles from "./dashboard.module.css";
+import ThemeToggle from "@/components/ui/ThemeToggle";
 
 interface Room {
   id: string;
@@ -78,6 +79,7 @@ export default function DashboardPage() {
     <div className={styles.container}>
       <header className={styles.header}>
         <h1 className={styles.logo} onClick={() => router.push("/dashboard")} style={{ cursor: "pointer" }}>Draw<span>App</span></h1>
+        <ThemeToggle variant="pill" />
         <button className={styles.signout} onClick={handleSignout}>Sign Out</button>
       </header>
 

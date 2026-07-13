@@ -8,7 +8,8 @@ export type Tool =
   | "line"
   | "arrow"
   | "eraser"
-  | "text";
+  | "text"
+  | "diamond";
 
 // ─── Shapes ───────────────────────────────────────────────────────────────────
 
@@ -52,10 +53,10 @@ export type LineShape = ShapeBase & {
 
 export type ArrowShape = ShapeBase & {
   type: "arrow";
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
+  x1: number; y1: number;
+  x2: number; y2: number;
+  /** Optional bezier control point — present when arrow is curved */
+  cx?: number; cy?: number;
 };
 
 export type TextShape = ShapeBase & {
@@ -66,13 +67,23 @@ export type TextShape = ShapeBase & {
   fontSize: number;
 };
 
+export type DiamondShape = ShapeBase & {
+  type: "diamond";
+  cx: number;
+  cy: number;
+  rx: number; // half-width
+  ry: number; // half-height
+  fillColor: string;
+};
+
 export type DrawingShape =
   | PencilShape
   | RectShape
   | EllipseShape
   | LineShape
   | ArrowShape
-  | TextShape;
+  | TextShape
+  | DiamondShape;
 
 // ─── Toolbar state ────────────────────────────────────────────────────────────
 
