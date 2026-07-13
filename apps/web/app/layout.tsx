@@ -28,9 +28,6 @@ const caveat = Caveat({
 export const metadata: Metadata = {
   title: "DrawApp",
   description: "Draw and collaborate together in real time",
-  icons: {
-    icon: "/icon.svg",
-  },
 };
 
 export default function RootLayout({
