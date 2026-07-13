@@ -15,7 +15,6 @@
     "db:push": "prisma db push",
     "db:deploy": "prisma migrate deploy"
   },
-  "type": "commonjs",
   "dependencies": {
     "@prisma/client": "^6.5.0",
     "dotenv": "^16.6.1",

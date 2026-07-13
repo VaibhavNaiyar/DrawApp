@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(du -sh /e/ProjectDraw/DrawApp/apps/* /e/ProjectDraw/DrawApp/packages/*)"
+    ]
+  }
+}

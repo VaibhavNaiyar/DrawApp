@@ -37,9 +37,6 @@ A real-time collaborative whiteboard app built from scratch. Users can draw toge
 
 ## Phase 1 — Architecture Audit
 
-**Goal:** Understand the existing codebase and the reference repo before writing any code. Identify what to keep, what to replace, and what's missing.
-
----
 
 ### 1.1 — Monorepo Structure
 
