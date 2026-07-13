@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useCallback } from "react";
 import type { DrawingShape } from "./types";
 
 /**
@@ -35,12 +35,27 @@ export function useDrawHistory() {
     commit([]);
   }
 
+  /**
+   * Rewrites every shape in the entire history stack: any shape whose
+   * strokeColor === `from` is updated to `to`. Does NOT add a new undo entry.
+   */
+  const remapColors = useCallback((from: string, to: string) => {
+    historyRef.current = historyRef.current.map((snapshot) =>
+      snapshot.map((shape) =>
+        shape.strokeColor === from ? { ...shape, strokeColor: to } : shape
+      )
+    );
+    // Force a re-render by bumping pos in place (same position, new ref)
+    setPos((p) => p);
+  }, []);
+
   return {
     shapes,
     commit,
     undo,
     redo,
     clear,
+    remapColors,
     canUndo: pos > 0,
     canRedo: pos < historyRef.current.length - 1,
   };

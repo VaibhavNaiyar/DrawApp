@@ -173,14 +173,17 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
     fontSize: 20,
   });
 
-  // Auto-switch default stroke color when theme changes
+  // Auto-switch default stroke color when theme changes + remap existing shapes
   useEffect(() => {
     const newDefault = theme === "dark" ? DARK_DEFAULT_STROKE : LIGHT_DEFAULT_STROKE;
     const oldDefault = theme === "dark" ? LIGHT_DEFAULT_STROKE : DARK_DEFAULT_STROKE;
+    // Update the toolbar color picker if user hasn't customized it
     setSettings((s) =>
       s.strokeColor === oldDefault ? { ...s, strokeColor: newDefault } : s
     );
-  }, [theme]);
+    // Remap every shape in history that was drawn with the old default
+    remapColors(oldDefault, newDefault);
+  }, [theme]); // eslint-disable-line react-hooks/exhaustive-deps
   const [textEditing, setTextEditing] = useState<{ id: string; x: number; y: number } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [transientAll, setTransientAll] = useState<DrawingShape[] | null>(null);
@@ -190,7 +193,7 @@ export default function DrawCanvas({ roomId, userId, userName }: DrawCanvasProps
   const [copied, setCopied] = useState(false);
 
   // ── History ────────────────────────────────────────────────────────────────
-  const { shapes, commit, undo, redo, clear, canUndo, canRedo } = useDrawHistory();
+  const { shapes, commit, undo, redo, clear, remapColors, canUndo, canRedo } = useDrawHistory();
 
   // ── Theme ref (used inside useCallback without stale closure) ────────────
   const themeRef = useRef(theme);
