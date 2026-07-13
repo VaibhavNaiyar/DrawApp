@@ -28,31 +28,37 @@
   padding: 6px 0;
   transition: color 0.15s;
 }
-
 .back:hover { color: var(--canvas-stroke-default); }
 
-/* ── Content ─────────────────────────────────────────────────────────────── */
+/* ── Content wrapper ─────────────────────────────────────────────────────── */
 .content {
-  max-width: 680px;
+  max-width: 860px;
   margin: 0 auto;
-  padding: 64px 24px 100px;
+  padding: 56px 24px 96px;
   display: flex;
   flex-direction: column;
-  gap: 60px;
+  gap: 56px;
 }
 
-/* ── Hero ────────────────────────────────────────────────────────────────── */
-/* Signature element: "a project by" in small caps above a huge handwritten name */
+/* ── Hero: text left, photo right ───────────────────────────────────────── */
 .hero {
   display: flex;
+  align-items: flex-start;
+  gap: 48px;
+}
+
+.heroText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .eyebrow {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--accent, #7c3aed);
   font-family: var(--font-display, sans-serif);
@@ -60,41 +66,64 @@
 
 .name {
   font-family: var(--font-handwritten, cursive);
-  font-size: clamp(44px, 10vw, 80px);
+  font-size: clamp(48px, 8vw, 72px);
   font-weight: 700;
   color: var(--canvas-stroke-default);
-  line-height: 1.0;
+  line-height: 1;
   margin: 0;
-  /* Subtle accent underline */
+}
+
+.designation {
+  font-family: var(--font-display, sans-serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent, #7c3aed);
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.bio {
+  font-size: 15px;
+  line-height: 1.8;
+  color: var(--canvas-stroke-default);
+  margin: 8px 0 0;
+  opacity: 0.82;
+}
+
+/* ── Photo ───────────────────────────────────────────────────────────────── */
+.photoWrap {
+  flex-shrink: 0;
   position: relative;
-  display: inline-block;
 }
 
-.name::after {
-  content: '';
+/* Accent border offset effect */
+.photoWrap::before {
+  content: "";
   position: absolute;
-  bottom: -4px;
-  left: 0;
-  width: 100%;
-  height: 3px;
-  background: var(--accent, #7c3aed);
-  border-radius: 2px;
+  inset: 0;
+  border-radius: 20px;
+  border: 2px solid var(--accent, #7c3aed);
+  transform: translate(6px, 6px);
   opacity: 0.35;
+  z-index: 0;
 }
 
-.tagline {
-  margin: 16px 0 0;
-  font-size: 16px;
-  color: var(--text-1, #94a3b8);
-  line-height: 1.6;
-  max-width: 520px;
+.photo {
+  position: relative;
+  z-index: 1;
+  border-radius: 18px;
+  object-fit: cover;
+  width: 220px;
+  height: 270px;
+  display: block;
+  border: 1px solid var(--border, rgba(100,100,120,0.15));
 }
 
 /* ── Section ─────────────────────────────────────────────────────────────── */
 .section {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 .sectionTitle {
@@ -112,63 +141,56 @@
   line-height: 1.75;
   color: var(--canvas-stroke-default);
   margin: 0;
-  opacity: 0.85;
+  opacity: 0.82;
 }
 
-/* ── Stack grid ──────────────────────────────────────────────────────────── */
-.stackGrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
-}
-
-.stackItem {
+/* ── Skills grid ─────────────────────────────────────────────────────────── */
+.skillsGrid {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 11px 0;
-  border-bottom: 1px solid var(--border, rgba(100,100,120,0.08));
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.stackName {
-  font-weight: 700;
-  font-size: 13px;
-  font-family: var(--font-display, sans-serif);
-  color: var(--canvas-stroke-default);
-}
-
-.stackRole {
+.skillPill {
   font-size: 12px;
-  color: var(--text-1, #94a3b8);
+  font-weight: 600;
+  font-family: var(--font-display, sans-serif);
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border-mid, rgba(100,100,120,0.25));
+  color: var(--canvas-stroke-default);
+  background: var(--bg-2, rgba(100,100,120,0.06));
+  transition: border-color 0.15s, color 0.15s;
 }
 
-/* ── Links ───────────────────────────────────────────────────────────────── */
+.skillPill:hover {
+  border-color: var(--accent, #7c3aed);
+  color: var(--accent, #7c3aed);
+}
+
+/* ── Social links ────────────────────────────────────────────────────────── */
 .links {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
 }
 
 .link {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 9px 18px;
+  padding: 9px 16px;
   border: 1px solid var(--border-mid, rgba(100,100,120,0.25));
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--canvas-stroke-default);
   text-decoration: none;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
   font-family: var(--font-display, sans-serif);
 }
 
-.link svg {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
+.link svg { width: 15px; height: 15px; flex-shrink: 0; }
 
 .link:hover {
   border-color: var(--accent, #7c3aed);
@@ -176,6 +198,15 @@
   background: rgba(124, 58, 237, 0.04);
 }
 
-@media (max-width: 560px) {
-  .stackGrid { grid-template-columns: 1fr; }
+/* ── Mobile ──────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .hero {
+    flex-direction: column-reverse;
+    align-items: center;
+    gap: 32px;
+  }
+
+  .photoWrap::before { transform: translate(4px, 4px); }
+  .photo { width: 180px; height: 220px; }
+  .heroText { align-items: center; text-align: center; }
 }

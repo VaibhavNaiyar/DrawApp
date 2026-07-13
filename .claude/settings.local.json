@@ -3,7 +3,8 @@
     "allow": [
       "Bash(du -sh /e/ProjectDraw/DrawApp/apps/* /e/ProjectDraw/DrawApp/packages/*)",
       "Bash(pnpm --filter @repo/web tsc --noEmit)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:my-portfolio-page-ruby.vercel.app)"
     ]
   }
 }
